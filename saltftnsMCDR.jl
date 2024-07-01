@@ -9,6 +9,10 @@ pipe_radius = 0.5;
 pipe_length = 10;
 pipe_top_depth = 1;
 
+#pumping parameters
+height_displaced = 3;
+initial_velocity = 0.001; #not yet used 
+
 #resolution parameters TODO determine best ones
 #note: be careful of time resolution needed, spacing resoslution needed
 #user set
@@ -19,10 +23,10 @@ domain_z = 15; #height, in meters
 #calculated
 x_res = floor(Int, domain_x/grid_spacing);
 z_res = floor(Int, domain_z/grid_spacing);
+locs = (Center(), Face(), Center());
 
 #setting up model components
 domain_grid = RectilinearGrid(CPU(), Float64; size = (x_res, z_res), x = (0, domain_x), z = (-domain_z, 0), topology = (Bounded, Flat, Bounded))
-pipe_grid = RectilinearGrid();
 clock = Clock{eltype(domain_grid)}(time = 0);
 advection = CenteredSecondOrder(); #default, not sure which one to choose
 buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
@@ -41,7 +45,7 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 #following are considered negligable/not accounted for: coriolis, stokes drift
 #following are determinined automatically: pressure solver 
 #have yet to think about following: auxiliary fields
-model = NonhydrostaticModel(; domain_grid, clock, advection, buoyancy, tracers, timestepper)
+model = NonhydrostaticModel(; grid = domain_grid, clock, advection, buoyancy, tracers, timestepper)
 
 #setting up just a basic gradient for water column 
 T_top = 21.67;
@@ -50,10 +54,24 @@ S_bot = 35.22;
 S_top = 34.18;
 delta_z = 200;
 #sets up initial gradient, starting from surface
-#TODO: pipe, can use for loop to set up mask, or somehow find a mask
-T_initial(x, z) = T_top - ((T_bot - T_top)/delta_z)z;
-S_initial(x, z) = S_top - ((S_bot - S_top)/delta_z)z;
-set!(model, T = T_initial; S = S_initial)
+#sets up pipe gradient 
+x_center = domain_x/2;
+function T_init(x, z)
+    if (x > (x_center - pipe_radius) && x < (x_center + pipe_radius) && z < -pipe_top_depth && z > -(pipe_top_depth + pipe_length))
+        return T_top - ((T_bot - T_top)/delta_z)*(z + height_displaced); 
+    else 
+        return T_top - ((T_bot - T_top)/delta_z)z;
+    end
+end
+function S_init(x, z)
+    if (x > (x_center - pipe_radius) && x < (x_center + pipe_radius) && z < -pipe_top_depth && z > -(pipe_top_depth + pipe_length))
+        return S_top - ((S_bot - S_top)/delta_z)*(z + height_displaced); 
+    else 
+        return S_top - ((S_bot - S_top)/delta_z)z;
+    end
+end
+set!(model, T = T_init; S = S_init)
+
 
 
 #visualize inital temperature distribution
@@ -65,8 +83,8 @@ axis_kwargs = (xlabel = "x (m)", ylabel = "z (m)", width = 400)
 ax1 = Axis(fig[1, 1]; title = "Temperature (C)", axis_kwargs...)
 ax2 = Axis(fig[2, 1]; title = "Salinity (ppt)", axis_kwargs...)
 
-T_lims = (T_initial(0, -domain_z), T_top);
-S_lims = (S_top, S_initial(0, -domain_z));
+T_lims = (minimum(T_init_matrix), maximum(T_init_matrix));
+S_lims = (minimum(S_init_matrix), maximum(S_init_matrix));
 x = xnodes(model.tracers.T)
 z = znodes(model.tracers.T)
 T_init_matrix = interior(model.tracers.T, :, 1, :)
@@ -83,3 +101,12 @@ fig
 
 #setting initial conditions 
 #TODO: perturb one part, maybe give it an intial velocity from pumping?? (this would align with matlab)
+
+
+#testing
+#setting up pipe
+# domain_arr = nodes(domain_grid, locs; reshape = true)
+# pipe_interior_grid_x = AbstractArray{Float64, 3}
+
+# x_spacings = xspacings(domain_grid, Center(), Face(), Center())
+# z_spacings = zspacings(domain_grid, Center(), Face(), Center())
