@@ -109,15 +109,18 @@ Colorbar(fig[2, 2], hm2)
 fig 
 
 #running model
-simulation = Simulation(model, Δt = 100, stop_iteration = 10000, stop_time = 15*day) # make initial delta t bigger
+simulation = Simulation(model, Δt = 1, stop_iteration = 10000, stop_time = 15*day) # make initial delta t bigger
 timeWizard = TimeStepWizard(cfl = 0.33) #what can the max delta t be?
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(10))
 #log progress --> TODO: add this
 
 #fields = Dict("u" => model.velocities.u, "w" => model.velocities.w, "T" => model.tracers.T, "S" => model.tracers.S)
-simulation.output_writers[:tracers] = JLD2OutputWriter(model, model.tracers, filename = "nowalls_R0.5L10D1.jld2", schedule = TimeInterval(1hour), overwrite_existing = true)
+simulation.output_writers[:tracers] = JLD2OutputWriter(model, model.tracers, filename = "nowallstracers_R0.5L10D1.jld2", schedule = TimeInterval(1hour), overwrite_existing = true)
+simulation.output_writers[:velocities] = JLD2OutputWriter(model, model.tracers, filename = "nowallsvelocities_R0.5L10D1.jld2", schedule = TimeInterval(1hour), overwrite_existing = true) #time average perhaps?
 
 run!(simulation; pickup = false);
+
+#visualize simulation
 
 
 
