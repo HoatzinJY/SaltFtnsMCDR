@@ -3,6 +3,10 @@ using Oceananigans
 using OceanBioME
 using TimesDates
 using CairoMakie
+using Printf
+
+const day = 86400;
+const hour = 3600; 
 
 #pipe parameters
 pipe_radius = 0.5;
@@ -11,7 +15,7 @@ pipe_top_depth = 1;
 
 #pumping parameters
 height_displaced = 3;
-initial_velocity = 0.001; #not yet used 
+initial_pipe_velocity = 0.001; #not yet used 
 
 #resolution parameters TODO determine best ones
 #note: be careful of time resolution needed, spacing resoslution needed
@@ -31,12 +35,11 @@ clock = Clock{eltype(domain_grid)}(time = 0);
 advection = CenteredSecondOrder(); #default, not sure which one to choose
 buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
 tracers = (:T, :S); #temperature, salinity
+ScalarDiffusivity(ν=1e-6, κ=(S=1e-7, T=1.45e-10)) #TODO; get more accurate constants from https://web.mit.edu/seawater/2017_MIT_Seawater_Property_Tables_r2b_2023c.pdf
 timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 #not yet incorporated 
 # forcing = wallForcers(); #for imaginary pipe walls
-# immersed_boundary = nothing; #another option for imaginary pipe walls
 # closure = nothing; #for turbulent dissapation at edges of domain, can set to be direction and tracer specific, if diffusivity is nonconstant and calculated per timestep, need diffusivity_field as well
-# boundary_conditions= myBoundaries(); # currently set to default (0 flux), but potentially could use immersed boundaries for
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 # background_fields::water_column_profiles = water_column_profiles(); #TODO, add in background t & s profiles to serve as a "contant" beyond pipe
 # #could add in hydrostatic_pressure_anomoly field to see if hydrostatic assumption is valid 
@@ -53,12 +56,13 @@ T_bot = 11.86;
 S_bot = 35.22;
 S_top = 34.18;
 delta_z = 200;
-#sets up initial gradient, starting from surface
-#sets up pipe gradient 
+#sets initial t and s 
 x_center = domain_x/2;
 function T_init(x, z)
+    #inside pipe
     if (x > (x_center - pipe_radius) && x < (x_center + pipe_radius) && z < -pipe_top_depth && z > -(pipe_top_depth + pipe_length))
         return T_top - ((T_bot - T_top)/delta_z)*(z + height_displaced); 
+    #outside pipe
     else 
         return T_top - ((T_bot - T_top)/delta_z)z;
     end
@@ -70,11 +74,19 @@ function S_init(x, z)
         return S_top - ((S_bot - S_top)/delta_z)z;
     end
 end
-set!(model, T = T_init; S = S_init)
+function w_init(x, z)
+    if (x > (x_center - pipe_radius) && x < (x_center + pipe_radius) && z < -pipe_top_depth && z > -(pipe_top_depth + pipe_length))
+        #return initial_pipe_velocity;
+        return 0; 
+    else 
+        return 0;
+    end
+end 
+set!(model, T = T_init, S = S_init, w = w_init)
 
 
 
-#visualize inital temperature distribution
+#visualize inital temperature/pressure distributions
 fig = Figure()
 title = "initial conditions"
 Label(fig[0, :], title)
@@ -96,11 +108,19 @@ Colorbar(fig[2, 2], hm2)
 
 fig 
 
-#visualize initial salinity distribution
+#running model
+simulation = Simulation(model, Δt = 100, stop_iteration = 10000, stop_time = 15*day) # make initial delta t bigger
+timeWizard = TimeStepWizard(cfl = 0.33) #what can the max delta t be?
+simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(10))
+#log progress --> TODO: add this
+
+#fields = Dict("u" => model.velocities.u, "w" => model.velocities.w, "T" => model.tracers.T, "S" => model.tracers.S)
+simulation.output_writers[:tracers] = JLD2OutputWriter(model, model.tracers, filename = "nowalls_R0.5L10D1.jld2", schedule = TimeInterval(1hour), overwrite_existing = true)
+
+run!(simulation; pickup = false);
 
 
-#setting initial conditions 
-#TODO: perturb one part, maybe give it an intial velocity from pumping?? (this would align with matlab)
+
 
 
 #testing
