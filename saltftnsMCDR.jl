@@ -26,9 +26,9 @@ x_grid_spacing = 0.1;# in meters
 z_grid_spacing = 0.1;# in meters
 domain_x = 15; # width, in meters
 domain_z = 15; #height, in meters
-initial_time_step = 0.001;
+initial_time_step = 1;
 max_time_step = 1minute;
-simulation_duration = 30minute;
+simulation_duration = 1hour;
 run_duration = 1minute;
 
 #pipe parameters
@@ -101,10 +101,10 @@ forcing = (u = u_pipe_wall, w = w_pipe_wall)
 #following are determinined automatically: pressure solver 
 #have yet to think about following: auxiliary fields
 
-model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing)
+model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy = nothing, tracers, timestepper, closure, forcing)
 @info "model made"
 #helper functions
-density_operation = seawater_density(model; geopotential_height)
+#density_operation = seawater_density(model; geopotential_height)
 #rounds number num up to nearest multiple of base
 #returns true or false for if coordinate is inside pipe, relies on center grid 
 
@@ -157,9 +157,9 @@ u = model.velocities.u;
 T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
-ρ = Field(density_operation)
-filename = "outputtest"
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true)
+#ρ = Field(density_operation)
+filename = "diffusiontest2"
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ); filename, schedule=TimeInterval(10), overwrite_existing=true)
 #time average perhaps?
 
 run!(simulation; pickup=false)
@@ -177,7 +177,7 @@ w_t = FieldTimeSeries(output_filename, "w")
 ζ_t = FieldTimeSeries(output_filename, "ζ")
 T_t = FieldTimeSeries(output_filename, "T")
 S_t = FieldTimeSeries(output_filename, "S")
-ρ_t = FieldTimeSeries(output_filename, "ρ")
+# ρ_t = FieldTimeSeries(output_filename, "ρ")
 times = u_t.times
 n = Observable(1)
 Observable(1)
@@ -187,7 +187,7 @@ wₙ = @lift interior(w_t[$n], :, 1, :)
 ζₙ = @lift interior(ζ_t[$n], :, 1, :)
 Tₙ = @lift interior(T_t[$n], :, 1, :)
 Sₙ = @lift interior(S_t[$n], :, 1, :)
-ρₙ = @lift interior(ρ_t[$n], :, 1, :)
+# ρₙ = @lift interior(ρ_t[$n], :, 1, :)
 
 num_Data_Points = length(times)
 #very inefficient way of getting max/min, need to update
@@ -210,7 +210,7 @@ T_range = getMaxAndMin(num_Data_Points, T_t)
 S_range = getMaxAndMin(num_Data_Points, S_t)
 u_range = getMaxAndMin(num_Data_Points, u_t)
 w_range = getMaxAndMin(num_Data_Points, w_t)
-ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
+# ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
 ζ_range = getMaxAndMin(num_Data_Points, ζ_t)
 
 
@@ -284,10 +284,10 @@ ax_S = Axis(fig[3, 1]; title="salinity", axis_kwargs...)
 hm_S = heatmap!(ax_S, xS, zS, Sₙ; colorrange=S_range, colormap=:haline) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[3, 2], hm_S, label="ppt")
 
-xρ, yρ, zρ = nodes(ρ_t[1])
-ax_ρ = Axis(fig[4, 1]; title="potential density", axis_kwargs...)
-hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=:viridis) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
+# xρ, yρ, zρ = nodes(ρ_t[1])
+# ax_ρ = Axis(fig[4, 1]; title="potential density", axis_kwargs...)
+# hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=:viridis) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+# Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
 
 fig
 @info "Making properties animation from data"
