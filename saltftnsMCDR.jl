@@ -29,7 +29,7 @@ domain_z = 15; #height, in meters
 initial_time_step = 0.001;
 max_time_step = 1minute;
 simulation_duration = 30minute;
-run_duration = 30minute;
+run_duration = 1minute;
 
 #pipe parameters
 pipe_radius = 0.5;
@@ -147,6 +147,8 @@ set!(model, T=T_init, S=S_init, w=w_init)
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
 timeWizard = TimeStepWizard(cfl=0.33, max_Δt=max_time_step) #TODO: set max delta t?
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
+progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
+add_callback!(simulation, progress_message, IterationInterval(10))
 #log progress --> TODO: add this
 
 #fields = Dict("u" => model.velocities.u, "w" => model.velocities.w, "T" => model.tracers.T, "S" => model.tracers.S)
@@ -156,7 +158,7 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = "walltest1"
+filename = "outputtest"
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true)
 #time average perhaps?
 
