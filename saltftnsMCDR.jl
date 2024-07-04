@@ -84,7 +84,7 @@ buoyancy = SeawaterBuoyancy(equation_of_state=eos)
 #buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
 tracers = (:T, :S); #temperature, salinity
 timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available 
-closure = ScalarDiffusivity(ν=1e-6, κ=(S=1e-7, T=1.45e-10));
+closure = ScalarDiffusivity(ν=1e-6, κ=(S=1e-7, T=1.45e-10))
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 # background_fields::water_column_profiles = water_column_profiles(); #TODO, add in background t & s profiles to serve as a "contant" beyond pipe 
 # forcing = wallForcers(); #for imaginary pipe walls
@@ -192,19 +192,13 @@ Sₙ = @lift interior(S_t[$n], :, 1, :)
 num_Data_Points = length(times)
 #very inefficient way of getting max/min, need to update
 function getMaxAndMin(numPoints, dataSeries)
-    max = maximum(dataSeries[1])
-    min = minimum(dataSeries[1])
+    myMax = maximum(interior(dataSeries[1], :, 1, :))
+    myMin = minimum(interior(dataSeries[1], :, 1, :))
     for i in 2:numPoints
-        myMax = maximum(dataSeries[i])
-        myMin = minimum(dataSeries[i])
-        if (myMax > max)
-            max = myMax
-        end
-        if (myMin < min)
-            min = myMin
-        end
+        myMax = max(maximum(interior(dataSeries[i], :, 1, :)),myMax )
+        myMin = min(minimum(interior(dataSeries[i], :, 1, :)), myMin)
     end
-    return (min, max)
+    return (myMin, myMax)
 end
 T_range = getMaxAndMin(num_Data_Points, T_t)
 S_range = getMaxAndMin(num_Data_Points, S_t)
