@@ -26,9 +26,12 @@ mutable struct DiffusionParameter
 end
 #numbers from DPO, at 20C, low estimate for isopycnal
 #TODO: maybe make values store a range for temp, and then search in range after interpolation
+eddy_horizontal_diffusivity = 5e2
+eddy_vertical_diffusivity = 1e-5
 viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
-T_diffusivity = DiffusionParameter(1.46e-7, 1e2, 1e-5)
-S_diffusivity = DiffusionParameter(1.3E-9, 1e2, 1e-5)
+T_diffusivity = DiffusionParameter(1.46e-7, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
+S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
+
 geopotential_height = 0; # sea surface height for potential density calculations
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
 
@@ -59,6 +62,8 @@ x_res = floor(Int, domain_x / x_grid_spacing);
 z_res = floor(Int, domain_z / z_grid_spacing);
 locs = (Center(), Face(), Center());
 x_center = domain_x / 2;
+
+#masks
 function isInsidePipe(x, z)
     if (x > (x_center - pipe_radius) && x < (x_center + pipe_radius) && z < -pipe_top_depth && z > -(pipe_top_depth + pipe_length))
         return true
@@ -96,41 +101,25 @@ pipeWallMask(x, y, z) = pipeWallMask(x, z)
 function noMask(x, z)
     return 1
 end
+#no mask
 noMask(x, y, z) = noMask(x, z)
-
-#setting up model components
-domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
-clock = Clock{eltype(domain_grid)}(time=0);
-advection = CenteredSecondOrder(); #default, not sure which one to choose
-eos = TEOS10EquationOfState()
-buoyancy = SeawaterBuoyancy(equation_of_state=eos)
-#buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
-tracers = (:T, :S); #temperature, salinity
-timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available 
-#TODO: currently, these are molecular values. should I add molecular = eddy together? horizontal (along isopycnal), or vertical? Can have non uniform diffusivities in each? 
-#TODO: tells us, effective diffusivity is molecular + eddy diffusivities 
-#TODO: replace values with those in S7.1, DPO, Figure ut what eddy viscosity to use?
-#TODO: make non constant diffusion, via interpolation? graphs? 
-#horizontal & vertical dissipation schemes are different, read here https://mitgcm.readthedocs.io/en/latest/algorithm/algorithm.html#horizontal-dissipation
-horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(S=S_diffusivity.molecular + S_diffusivity.isopycnal, T=T_diffusivity.molecular + T_diffusivity.isopycnal)) 
-vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(S=S_diffusivity.molecular + S_diffusivity.diapycnal, T=T_diffusivity.molecular + T_diffusivity.diapycnal)) 
-closure = (horizontal_closure, vertical_closure)
-# closure = ScalarDiffusivity(ν=1.05e-6, κ=(S=1.3e-9, T=1.46e-7)) #this made the diffusion time scale way too long
-#uses relaxation to set pipe wall velocities to 0
-u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
-w_damping_rate = 1/1 #relaxes fields on 1 second time scale
-u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
-w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
-forcing = (u = u_pipe_wall, w = w_pipe_wall)
-#TODO, maybe add relaxation @ edges of domain to model "infinite reservoir"? 
-# #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
-
-#sets up model
-model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing)
-@info "model made"
-#helper functions
-density_operation = seawater_density(model; geopotential_height)
-#rounds number num up to nearest multiple of base
+#border sponge layer 
+function borderMask(x, z)
+        if(min(x, domain_x - x) < x_grid_spacing || min(-z, domain_z + z) < z_grid_spacing)
+            return 1
+        else
+            return 0
+        end
+end
+borderMask(x, y, z) = borderMask(x, z)
+function  waterBorderMask(x, z)
+    if(min(x, domain_x - x) < x_grid_spacing || (domain_z + z) < z_grid_spacing)
+        return 1
+    else
+        return 0
+    end
+end
+waterBorderMask(x, y, z) = waterBorderMask(x, z)
 
 #setting up just a basic gradient for water column 
 T_top = 21.67;
@@ -149,6 +138,7 @@ function T_init(x, z)
         return T_top - ((T_bot - T_top) / delta_z)z
     end
 end
+T_init(x, y, z) = T_init(x, z)
 function S_init(x, z)
     if (isInsidePipe(x, z))
         return S_top - ((S_bot - S_top) / delta_z) * (z + height_displaced)
@@ -156,6 +146,7 @@ function S_init(x, z)
         return S_top - ((S_bot - S_top) / delta_z)z
     end
 end
+S_init(x, y, z) = S_init(x, z)
 function w_init(x, z)
     if (isInsidePipe(x, z))
         #return initial_pipe_velocity;
@@ -166,9 +157,54 @@ function w_init(x, z)
 end
 function getBackgroundDensity(z) #takes a positive depth
     eos = TEOS10EquationOfState() 
-    T_consv = gsw_ct_from_t(S_init(0,z), T_init(0,z),gsw_p_from_z(z, 30)) #set to 30 degrees north
-    return TEOS10.ρ(T_consv, S_init(0,z), z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
+    S_abs = gsw_sa_from_sp(S_init(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
+    T_consv = gsw_ct_from_t(S_abs, T_init(0,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
+    return TEOS10.ρ(T_consv, S_abs, z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
 end
+
+
+#setting up model components
+domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
+clock = Clock{eltype(domain_grid)}(time=0);
+advection = CenteredSecondOrder(); #default, not sure which one to choose
+eos = TEOS10EquationOfState()
+buoyancy = SeawaterBuoyancy(equation_of_state=eos)
+#buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
+tracers = (:T, :S); #temperature, salinity
+timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available 
+#TODO: currently, these are molecular values. should I add molecular = eddy together? horizontal (along isopycnal), or vertical? Can have non uniform diffusivities in each? 
+#TODO: tells us, effective diffusivity is molecular + eddy diffusivities 
+#TODO: replace values with those in S7.1, DPO, Figure ut what eddy viscosity to use?
+#TODO: make non constant diffusion, via interpolation? graphs? 
+#horizontal & vertical dissipation schemes are different, read here https://mitgcm.readthedocs.io/en/latest/algorithm/algorithm.html#horizontal-dissipation\
+
+horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(S=S_diffusivity.molecular + S_diffusivity.isopycnal, T=T_diffusivity.molecular + T_diffusivity.isopycnal)) 
+vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(S=S_diffusivity.molecular + S_diffusivity.diapycnal, T=T_diffusivity.molecular + T_diffusivity.diapycnal)) 
+closure = (horizontal_closure, vertical_closure)
+
+# closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(S=S_diffusivity.molecular, T=T_diffusivity.molecular)) #this made the diffusion time scale way too long
+#uses relaxation to set pipe wall velocities to 0
+u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
+w_damping_rate = 1/1 #relaxes fields on 1 second time scale
+u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
+w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
+
+wall_damping_rate = 1/0.000001
+uw_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask)
+uw_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask)
+T_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = T_init)
+S_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = S_init)
+forcing = (u = (u_pipe_wall, uw_border ), w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+#TODO, maybe add relaxation @ edges of domain to model "infinite reservoir"? 
+# #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
+
+#sets up model
+model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing)
+@info "model made"
+#helper functions
+density_operation = seawater_density(model; geopotential_height)
+#rounds number num up to nearest multiple of base
+
 set!(model, T=T_init, S=S_init, w=w_init)
 ρ_initial = Field(density_operation)
 compute!(ρ_initial)
@@ -176,7 +212,6 @@ compute!(ρ_initial)
 
 
 #setting time steps 
-
 function getMaskedAverage(mask::Function, field)
     fieldNodes = nodes(field.grid, locs, reshape = true)
     sum = 0;
@@ -192,6 +227,7 @@ end
 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T
+# diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length) - getBackgroundDensity(-pipe_top_depth))/pipe_length#takes average for unaltered water column
 initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
 initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_density_gradient) #TODO: think about implmeenting for non initial times
@@ -216,8 +252,8 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = "detailed test1"
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true)
+filename = "detailed diffusion sponge layer test 1"
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
 run!(simulation; pickup=false)
@@ -267,12 +303,6 @@ w_range = getMaxAndMin(num_Data_Points, w_t)
 
 
 
-
-
-
-
-
-
 #making animations 
 function getIndexFromTime(time, timeSeries)
     numTotFrames = length(timeSeries)
@@ -289,6 +319,37 @@ function getIndexFromTime(time, timeSeries)
 end
 plot_until_time = -1 #enter -1 to plot whole thing
 lastFrame = getIndexFromTime(plot_until_time, times)
+
+#properties
+fig = Figure(size=(600, 900))
+title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
+axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
+fig[1, :] = Label(fig, title)
+
+xT, yT, zT = nodes(T_t[1])
+ax_T = Axis(fig[2, 1]; title="temperature", axis_kwargs...)
+hm_T = heatmap!(ax_T, xT, zT, Tₙ; colorrange=T_range, colormap=:thermal) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+Colorbar(fig[2, 2], hm_T, label="C")
+
+xS, yS, zS = nodes(S_t[1])
+ax_S = Axis(fig[3, 1]; title="salinity", axis_kwargs...)
+hm_S = heatmap!(ax_S, xS, zS, Sₙ; colorrange=S_range, colormap=:haline) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+Colorbar(fig[3, 2], hm_S, label="ppt")
+
+xρ, yρ, zρ = nodes(ρ_t[1])
+ax_ρ = Axis(fig[4, 1]; title="potential density", axis_kwargs...)
+hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=:viridis) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
+
+fig
+@info "Making properties animation from data"
+frames = 1:lastFrame
+record(fig, filename * "properties.mp4", frames, framerate=8) do i
+    @info string("Plotting frame ", i, " of ", frames[end])
+    n[] = i
+end
+
+
 
 #velocities
 fig = Figure(size=(600, 900))
@@ -320,34 +381,7 @@ record(fig, filename * "velocities.mp4", frames, framerate=8) do i
     n[] = i
 end
 
-#properties
-fig = Figure(size=(600, 900))
-title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
-axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
-fig[1, :] = Label(fig, title)
 
-xT, yT, zT = nodes(T_t[1])
-ax_T = Axis(fig[2, 1]; title="temperature", axis_kwargs...)
-hm_T = heatmap!(ax_T, xT, zT, Tₙ; colorrange=T_range, colormap=:thermal) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-Colorbar(fig[2, 2], hm_T, label="C")
-
-xS, yS, zS = nodes(S_t[1])
-ax_S = Axis(fig[3, 1]; title="salinity", axis_kwargs...)
-hm_S = heatmap!(ax_S, xS, zS, Sₙ; colorrange=S_range, colormap=:haline) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-Colorbar(fig[3, 2], hm_S, label="ppt")
-
-xρ, yρ, zρ = nodes(ρ_t[1])
-ax_ρ = Axis(fig[4, 1]; title="potential density", axis_kwargs...)
-hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=:viridis) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
-
-fig
-@info "Making properties animation from data"
-frames = 1:lastFrame
-record(fig, filename * "properties.mp4", frames, framerate=8) do i
-    @info string("Plotting frame ", i, " of ", frames[end])
-    n[] = i
-end
 
 
 
