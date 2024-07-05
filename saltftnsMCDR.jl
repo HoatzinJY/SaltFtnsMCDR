@@ -6,6 +6,8 @@ using CairoMakie
 using Printf
 using Oceananigans, SeawaterPolynomials.TEOS10
 using Oceananigans.Models: seawater_density
+using SeawaterPolynomials
+using GibbsSeaWater
 
 #TODO: organizize file, declare variables as global and make function file 
 #constants and operations
@@ -14,6 +16,19 @@ using Oceananigans.Models: seawater_density
 const day = 86400;
 const hour = 3600;
 const minute = 60;
+const g = 9.806; #gravitational acceleration, in m^2/s
+
+#TODO: think about which one to use, horiz = along isopycnals, vert = not along isopycnals, from DPO
+mutable struct DiffusionParameter
+    molecular::Float64
+    isopycnal::Float64 #horizontal
+    diapycnal::Float64 #vertical
+end
+#numbers from DPO, at 20C, low estimate for isopycnal
+#TODO: maybe make values store a range for temp, and then search in range after interpolation
+viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
+T_diffusivity = DiffusionParameter(1.46e-7, 1e2, 1e-5)
+S_diffusivity = DiffusionParameter(1.3E-9, 1e2, 1e-5)
 geopotential_height = 0; # sea surface height for potential density calculations
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
 
@@ -26,10 +41,6 @@ x_grid_spacing = 0.1;# in meters
 z_grid_spacing = 0.1;# in meters
 domain_x = 15; # width, in meters
 domain_z = 15; #height, in meters
-initial_time_step = 0.001;
-max_time_step = 1minute;
-simulation_duration = 30minute;
-run_duration = 1minute;
 
 #pipe parameters
 pipe_radius = 0.5;
@@ -55,6 +66,14 @@ function isInsidePipe(x, z)
         return false
     end
 end
+function pipeMask(x, z)
+    if (isInsidePipe(x, z))
+        return 1
+    else
+        return 0
+    end
+end
+pipeMask(x,y,z) = pipeMask(x, z)
 #returns true or false for if coordinate is inside imaginary pipe walls, relies on center grid 
 function isPipeWall(x, z)
     left_wall_range = (x_center - pipe_radius - pipe_wall_thickness) .. (x_center - pipe_radius)
@@ -66,14 +85,18 @@ function isPipeWall(x, z)
         return false
     end
 end
-function pipeWallMask(x,y,z)
+function pipeWallMask(x,z)
     if (isPipeWall(x, z))
         return 1
     else
         return 0
     end
 end
-
+pipeWallMask(x, y, z) = pipeWallMask(x, z)
+function noMask(x, z)
+    return 1
+end
+noMask(x, y, z) = noMask(x, z)
 
 #setting up model components
 domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
@@ -84,29 +107,30 @@ buoyancy = SeawaterBuoyancy(equation_of_state=eos)
 #buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
 tracers = (:T, :S); #temperature, salinity
 timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available 
-closure = ScalarDiffusivity(ν=1e-6, κ=(S=1e-7, T=1.45e-10))
-# #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
-# background_fields::water_column_profiles = water_column_profiles(); #TODO, add in background t & s profiles to serve as a "contant" beyond pipe 
-# forcing = wallForcers(); #for imaginary pipe walls
-#TODO: more accurate closure/diffusivity, set constants as functions
-#uses relaxation to set pipe wall velocities to 0 TODO: look into implementation of relaxation
+#TODO: currently, these are molecular values. should I add molecular = eddy together? horizontal (along isopycnal), or vertical? Can have non uniform diffusivities in each? 
+#TODO: tells us, effective diffusivity is molecular + eddy diffusivities 
+#TODO: replace values with those in S7.1, DPO, Figure ut what eddy viscosity to use?
+#TODO: make non constant diffusion, via interpolation? graphs? 
+#horizontal & vertical dissipation schemes are different, read here https://mitgcm.readthedocs.io/en/latest/algorithm/algorithm.html#horizontal-dissipation
+horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(S=S_diffusivity.molecular + S_diffusivity.isopycnal, T=T_diffusivity.molecular + T_diffusivity.isopycnal)) 
+vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(S=S_diffusivity.molecular + S_diffusivity.diapycnal, T=T_diffusivity.molecular + T_diffusivity.diapycnal)) 
+closure = (horizontal_closure, vertical_closure)
+# closure = ScalarDiffusivity(ν=1.05e-6, κ=(S=1.3e-9, T=1.46e-7)) #this made the diffusion time scale way too long
+#uses relaxation to set pipe wall velocities to 0
 u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
 w_damping_rate = 1/1 #relaxes fields on 1 second time scale
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
 forcing = (u = u_pipe_wall, w = w_pipe_wall)
+#TODO, maybe add relaxation @ edges of domain to model "infinite reservoir"? 
+# #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
 #sets up model
-#following are considered negligable/not accounted for: coriolis, stokes drift
-#following are determinined automatically: pressure solver 
-#have yet to think about following: auxiliary fields
-
 model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing)
 @info "model made"
 #helper functions
 density_operation = seawater_density(model; geopotential_height)
 #rounds number num up to nearest multiple of base
-#returns true or false for if coordinate is inside pipe, relies on center grid 
 
 #setting up just a basic gradient for water column 
 T_top = 21.67;
@@ -140,8 +164,42 @@ function w_init(x, z)
         return 0
     end
 end
+function getBackgroundDensity(z) #takes a positive depth
+    eos = TEOS10EquationOfState() 
+    T_consv = gsw_ct_from_t(S_init(0,z), T_init(0,z),gsw_p_from_z(z, 30)) #set to 30 degrees north
+    return TEOS10.ρ(T_consv, S_init(0,z), z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
+end
 set!(model, T=T_init, S=S_init, w=w_init)
+ρ_initial = Field(density_operation)
+compute!(ρ_initial)
 @info "initial ocnditions set"
+
+
+#setting time steps 
+
+function getMaskedAverage(mask::Function, field)
+    fieldNodes = nodes(field.grid, locs, reshape = true)
+    sum = 0;
+    count = 0;
+    for i in eachindex(fieldNodes[1])
+        for j in eachindex(fieldNodes[3])
+            sum += mask(fieldNodes[1][i], fieldNodes[3][j]) * field.data[i, 1, j]
+            count += 1*mask(fieldNodes[1][i], fieldNodes[3][j])
+        end
+    end
+    return sum/count
+end
+
+min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
+diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T
+surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length) - getBackgroundDensity(-pipe_top_depth))/pipe_length#takes average for unaltered water column
+initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
+initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_density_gradient) #TODO: think about implmeenting for non initial times
+
+initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale);
+max_time_step = min(diffusion_time_scale, initial_oscillation_time_scale);
+simulation_duration = 3hour
+run_duration = 15minute;
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -158,7 +216,7 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = "outputtest"
+filename = "detailed test1"
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true)
 #time average perhaps?
 
