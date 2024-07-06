@@ -9,12 +9,20 @@ using Oceananigans.Models: seawater_density
 using SeawaterPolynomials
 using GibbsSeaWater
 
+#= 
+NOTES
+- seems to be significanty slower after adding in forcing 
+=#
+
 #TODO: test that velocity forcing has no impact on model 
+#TODO: test with buoyancy
+#TODO: forcing: no hoizontal or vertical eddy diffusion through pipe walls, only molecular 
 const day = 86400;
 const hour = 3600;
 const minute = 60;
 const g = 9.806; #gravitational acceleration, in m^2/s
-const scaling = 0.1
+
+scale = 1
 
 geopotential_height = 0; # sea surface height for potential density calculations
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
@@ -26,22 +34,22 @@ S_top = 34.18;
 delta_z = 200;
 
 #grid spacing
-x_grid_spacing = 0.05scaling;# in meters
-z_grid_spacing = 0.05scaling;# in meters
-domain_x = 15scaling; # width, in meters
-domain_z = 15scaling; #height, in meters
+x_grid_spacing = 0.05scale;# in meters
+z_grid_spacing = 0.05scale;# in meters
+domain_x = 15scale; # width, in meters
+domain_z = 15scale; #height, in meters
 
 #pipe parameters
-pipe_radius = 0.5scaling;
-pipe_length = 10scaling;
-pipe_top_depth = 1scaling;
-pipe_wall_thickness_intended = 0.01scaling;
+pipe_radius = 0.5scale;
+pipe_length = 10scale;
+pipe_top_depth = 1scale;
+pipe_wall_thickness_intended = 0.01scale;
 pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 
 #pumping parameters
-height_displaced = 3scaling;
-initial_pipe_velocity = 0.001scaling; #not yet used 
+height_displaced = 3scale;
+initial_pipe_velocity = 0.001scale; #not yet used 
 
 x_res = floor(Int, domain_x / x_grid_spacing);
 z_res = floor(Int, domain_z / z_grid_spacing);
@@ -130,15 +138,20 @@ domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_
 advection = CenteredSecondOrder();
 tracers = (:T, :S); 
 timestepper = :RungeKutta3; 
-# closure = ScalarDiffusivity(ν=1.05e-6, κ=(S=1.3E-9, T=1.46e-7))
-closure = ScalarDiffusivity(ν=0, κ=(S=0.5, T=1.0))
+closure = ScalarDiffusivity(ν=1.05e-6, κ=(T=1.46e-7, S=1.3E-9))
+#closure = ScalarDiffusivity(ν=0, κ=(S=0.5, T=1.0))
 buoyancy = nothing
+u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
+w_damping_rate = 1/1 #relaxes fields on 1 second time scale
+u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
+w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
+forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
 # wall_damping_rate = 1/0.000001
 # T_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = T_init)
 # S_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = S_init)
 # forcing = (T = T_border, S=S_border)
 
-model = NonhydrostaticModel(; grid = domain_grid, advection, buoyancy, tracers, timestepper, closure)
+model = NonhydrostaticModel(; grid = domain_grid, advection, buoyancy, tracers, timestepper, closure, forcing)
 @info "model made"
 set!(model, T=T_init, S=S_init)
 @info "initial ocnditions set"
@@ -147,8 +160,8 @@ min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 initial_time_step = 0.1*diffusion_time_scale
 max_time_step = 0.2*diffusion_time_scale
-simulation_duration = 1hour
-run_duration = 30;
+simulation_duration = 15day
+run_duration = 60;
 
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
 timeWizard = TimeStepWizard(cfl=0.33, max_Δt=max_time_step) #TODO: set max delta t?
@@ -159,7 +172,7 @@ add_callback!(simulation, progress_message, IterationInterval(10))
 
 T = model.tracers.T;
 S = model.tracers.S;
-filename = "detailed diffusion small max time step 0.2 order 2 timestepper no sponge test 5"
+filename = "diffusion trial with real value velocity forcing check"
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; T, S); filename, schedule= IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
