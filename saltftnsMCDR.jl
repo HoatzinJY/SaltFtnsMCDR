@@ -13,7 +13,7 @@ using GibbsSeaWater
 problem: with using only molecular diffusivities, it seems to be too slow? 
 
 =#
-
+#TODO: figure out if custom forcing takes (x, y, z) or (x, z, t)
 #TODO: organizize file, declare variables as global and make function file 
 #constants and operations
 #TODO: figure out why it seems to be diverging, timestep too large, or, diverges over approx 50min
@@ -256,13 +256,12 @@ initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_den
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-max_time_step = min(0.2*diffusion_time_scale, 0.2*viscous_time_scale, initial_oscillation_time_scale)
 simulation_duration = 3hour
 run_duration = 15minute;
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=0.33, max_Δt=max_time_step) #TODO: set max delta t?
+timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2) #TODO: set max delta t?
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(10))
