@@ -9,6 +9,11 @@ using Oceananigans.Models: seawater_density
 using SeawaterPolynomials
 using GibbsSeaWater
 
+#= 
+problem: with using only molecular diffusivities, it seems to be too slow? 
+
+=#
+
 #TODO: organizize file, declare variables as global and make function file 
 #constants and operations
 #TODO: figure out why it seems to be diverging, timestep too large, or, diverges over approx 50min
@@ -19,6 +24,7 @@ const minute = 60;
 const g = 9.806; #gravitational acceleration, in m^2/s
 
 #TODO: think about which one to use, horiz = along isopycnals, vert = not along isopycnals, from DPO
+#enviroment parameters
 mutable struct DiffusionParameter
     molecular::Float64
     isopycnal::Float64 #horizontal
@@ -32,30 +38,48 @@ viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
 T_diffusivity = DiffusionParameter(1.46e-7, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 
+T_top = 21.67;
+T_bot = 11.86;
+S_bot = 35.22;
+S_top = 34.18;
+delta_z = 200;
+
 geopotential_height = 0; # sea surface height for potential density calculations
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
+function getMaxAndMin(numPoints, dataSeries)
+    myMax = maximum(interior(dataSeries[1], :, 1, :))
+    myMin = minimum(interior(dataSeries[1], :, 1, :))
+    for i in 2:numPoints
+        myMax = max(maximum(interior(dataSeries[i], :, 1, :)),myMax )
+        myMin = min(minimum(interior(dataSeries[i], :, 1, :)), myMin)
+    end
+    return (myMin, myMax)
+end
 
 
 #resolution parameters TODO determine best ones
 #when set to 0.1, unstable, seems to be increasing velocity drastically
 #note: be careful of time resolution needed, spacing resoslution needed
 #user set
-x_grid_spacing = 0.1;# in meters
-z_grid_spacing = 0.1;# in meters
-domain_x = 15; # width, in meters
-domain_z = 15; #height, in meters
+#grid spacing
+scale = 1
+x_grid_spacing = 0.05scale;# in meters
+z_grid_spacing = 0.05scale;# in meters
+domain_x = 15scale; # width, in meters
+domain_z = 15scale; #height, in meters
 
 #pipe parameters
-pipe_radius = 0.5;
-pipe_length = 10;
-pipe_top_depth = 1;
-pipe_wall_thickness_intended = 0.01;
+pipe_radius = 0.5scale;
+pipe_length = 10scale;
+pipe_top_depth = 1scale;
+pipe_wall_thickness_intended = 0.01scale;
 pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 
 #pumping parameters
-height_displaced = 3;
-initial_pipe_velocity = 0.001; #not yet used 
+height_displaced = 3scale;
+initial_pipe_velocity = 0.001scale; #not yet used 
+
 
 #calculated
 x_res = floor(Int, domain_x / x_grid_spacing);
@@ -121,12 +145,9 @@ function  waterBorderMask(x, z)
 end
 waterBorderMask(x, y, z) = waterBorderMask(x, z)
 
+#no forcing option
+noforcing(x, y, z, t) = 0 #TODO: test this 
 #setting up just a basic gradient for water column 
-T_top = 21.67;
-T_bot = 11.86;
-S_bot = 35.22;
-S_top = 34.18;
-delta_z = 200;
 #sets initial t and s
 #TODO:set up container functions for these to allow moving to another file 
 function T_init(x, z)
@@ -178,23 +199,24 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 #TODO: make non constant diffusion, via interpolation? graphs? 
 #horizontal & vertical dissipation schemes are different, read here https://mitgcm.readthedocs.io/en/latest/algorithm/algorithm.html#horizontal-dissipation\
 
-horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(S=S_diffusivity.molecular + S_diffusivity.isopycnal, T=T_diffusivity.molecular + T_diffusivity.isopycnal)) 
-vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(S=S_diffusivity.molecular + S_diffusivity.diapycnal, T=T_diffusivity.molecular + T_diffusivity.diapycnal)) 
+"""IMPORTANT: order of definition of kappas matter,must define in same order as tracer statement even though finding it later works""";
+horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
+vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 closure = (horizontal_closure, vertical_closure)
 
-# closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(S=S_diffusivity.molecular, T=T_diffusivity.molecular)) #this made the diffusion time scale way too long
+# closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
 #uses relaxation to set pipe wall velocities to 0
 u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
 w_damping_rate = 1/1 #relaxes fields on 1 second time scale
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
-
-wall_damping_rate = 1/0.000001
-uw_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask)
-uw_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask)
-T_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = T_init)
-S_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = S_init)
-forcing = (u = (u_pipe_wall, uw_border ), w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
+# wall_damping_rate = 1/0.000001
+# uw_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask)
+# uw_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask)
+# T_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = T_init)
+# S_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = S_init)
+#forcing = (u = (u_pipe_wall, uw_border ), w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #TODO, maybe add relaxation @ edges of domain to model "infinite reservoir"? 
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
@@ -231,9 +253,10 @@ diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length) - getBackgroundDensity(-pipe_top_depth))/pipe_length#takes average for unaltered water column
 initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
 initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_density_gradient) #TODO: think about implmeenting for non initial times
+viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
-initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale);
-max_time_step = min(diffusion_time_scale, initial_oscillation_time_scale);
+initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
+max_time_step = min(0.2*diffusion_time_scale, 0.2*viscous_time_scale, initial_oscillation_time_scale)
 simulation_duration = 3hour
 run_duration = 15minute;
 
@@ -243,7 +266,7 @@ timeWizard = TimeStepWizard(cfl=0.33, max_Δt=max_time_step) #TODO: set max delt
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(10))
-#log progress --> TODO: add this
+
 
 #fields = Dict("u" => model.velocities.u, "w" => model.velocities.w, "T" => model.tracers.T, "S" => model.tracers.S)
 w = model.velocities.w;
@@ -285,15 +308,6 @@ Sₙ = @lift interior(S_t[$n], :, 1, :)
 
 num_Data_Points = length(times)
 #very inefficient way of getting max/min, need to update
-function getMaxAndMin(numPoints, dataSeries)
-    myMax = maximum(interior(dataSeries[1], :, 1, :))
-    myMin = minimum(interior(dataSeries[1], :, 1, :))
-    for i in 2:numPoints
-        myMax = max(maximum(interior(dataSeries[i], :, 1, :)),myMax )
-        myMin = min(minimum(interior(dataSeries[i], :, 1, :)), myMin)
-    end
-    return (myMin, myMax)
-end
 T_range = getMaxAndMin(num_Data_Points, T_t)
 S_range = getMaxAndMin(num_Data_Points, S_t)
 u_range = getMaxAndMin(num_Data_Points, u_t)
