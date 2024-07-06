@@ -200,22 +200,26 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 #horizontal & vertical dissipation schemes are different, read here https://mitgcm.readthedocs.io/en/latest/algorithm/algorithm.html#horizontal-dissipation\
 
 """IMPORTANT: order of definition of kappas matter,must define in same order as tracer statement even though finding it later works""";
-horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
-vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
-closure = (horizontal_closure, vertical_closure)
+closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
 
-# closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
-#uses relaxation to set pipe wall velocities to 0
-u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
-w_damping_rate = 1/1 #relaxes fields on 1 second time scale
-u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
-w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
-forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
-# wall_damping_rate = 1/0.000001
-# uw_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask)
-# uw_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask)
-# T_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = T_init)
-# S_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = S_init)
+# horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
+# vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
+# closure = (horizontal_closure, vertical_closure)
+
+
+noforcing(x, y, z) = 0 
+forcing = (u = noforcing,  w = noforcing)
+# u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
+# w_damping_rate = 1/1 #relaxes fields on 1 second time scale
+# u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
+# w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
+# forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
+
+# border_damping_rate = 1/0.000001
+# uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
+# uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
+# T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init)
+# S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init)
 #forcing = (u = (u_pipe_wall, uw_border ), w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #TODO, maybe add relaxation @ edges of domain to model "infinite reservoir"? 
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
@@ -248,15 +252,15 @@ function getMaskedAverage(mask::Function, field)
 end
 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
-diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T
-# diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
+# diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T
+diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length) - getBackgroundDensity(-pipe_top_depth))/pipe_length#takes average for unaltered water column
 initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
 initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_density_gradient) #TODO: think about implmeenting for non initial times
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-simulation_duration = 3hour
+simulation_duration = 15day;
 run_duration = 15minute;
 
 #running model
@@ -274,8 +278,8 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = "detailed diffusion sponge layer test 1"
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1), overwrite_existing=true) #can also set to TimeInterval
+filename = "diffusion and buoyancy no walls test 1"
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
 run!(simulation; pickup=false)
