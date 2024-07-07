@@ -9,9 +9,14 @@ using Oceananigans.Models: seawater_density
 using SeawaterPolynomials
 using GibbsSeaWater
 
+"""currently only uses molecular diffusion as there is no motion""";
+
 #= 
 NOTES
 - seems to be significanty slower after adding in forcing 
+PROBLEM: not setting diffusive cfl
+- ok at 0.2, bad at 0.33 *diffusive time scale 
+- TODO: figure ouhow to use difusive cfl
 =#
 
 #TODO: test that velocity forcing has no impact on model 
@@ -21,7 +26,7 @@ const day = 86400;
 const hour = 3600;
 const minute = 60;
 const g = 9.806; #gravitational acceleration, in m^2/s
-
+myCFL = 0.33
 scale = 1
 
 geopotential_height = 0; # sea surface height for potential density calculations
@@ -113,6 +118,7 @@ function  waterBorderMask(x, z)
 end
 waterBorderMask(x, y, z) = waterBorderMask(x, z)
 
+
 #sets initial t and s
 #TODO:set up container functions for these to allow moving to another file 
 function T_init(x, z)
@@ -138,14 +144,17 @@ domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_
 advection = CenteredSecondOrder();
 tracers = (:T, :S); 
 timestepper = :RungeKutta3; 
-closure = ScalarDiffusivity(ν=1.05e-6, κ=(T=1.46e-7, S=1.3E-9))
+closure = ScalarDiffusivity(ν=0, κ=(T=1.46e-7, S=1.3E-9))
 #closure = ScalarDiffusivity(ν=0, κ=(S=0.5, T=1.0))
 buoyancy = nothing
-u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
-w_damping_rate = 1/1 #relaxes fields on 1 second time scale
-u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
-w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
-forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
+# u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
+# w_damping_rate = 1/1 #relaxes fields on 1 second time scale
+# u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
+# w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
+# forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
+
+noforcing(x, y, z) = 0 
+forcing = (u = noforcing,  w = noforcing)
 # wall_damping_rate = 1/0.000001
 # T_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = T_init)
 # S_border = Relaxation(rate = wall_damping_rate, mask = waterBorderMask, target = S_init)
@@ -159,12 +168,12 @@ set!(model, T=T_init, S=S_init)
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 initial_time_step = 0.1*diffusion_time_scale
-max_time_step = 0.2*diffusion_time_scale
+#max_time_step = myCFL*diffusion_time_scale
 simulation_duration = 15day
-run_duration = 60;
+run_duration = 5minute;
 
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=0.33, max_Δt=max_time_step) #TODO: set max delta t?
+timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2) #TODO: set max delta t?
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(10))
@@ -172,7 +181,7 @@ add_callback!(simulation, progress_message, IterationInterval(10))
 
 T = model.tracers.T;
 S = model.tracers.S;
-filename = "diffusion trial with real value velocity forcing check"
+filename = "diffusion trial with cfldiffusion on to 0.2"
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; T, S); filename, schedule= IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
