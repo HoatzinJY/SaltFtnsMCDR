@@ -8,16 +8,36 @@ using Oceananigans, SeawaterPolynomials.TEOS10
 using Oceananigans.Models: seawater_density
 using SeawaterPolynomials
 using GibbsSeaWater
+using NetCDF
+
+# next run: with sponge
+# realized: STABLE WITH 10x steeper gradient but not this? 
+#thought: looking at traceradvection term, look at how time step wizard does normal cfl 
+
 
 #= 
-problem: with using only molecular diffusivities, it seems to be too slow? 
+- add in ability to take in external field
+- make wall forcings accurate to friction
+- make wall forcings accurate to diffusion  and block salt(think about equation, change in tracer with c, equate that to flux of heat through pipe walls)
+- make diffusion and viscous terms accurate to mixing 
+- accurately model infinity reservoir
+- figure out issue with temperature --> potentially graph the average field? 
 
+problem: with using only molecular diffusivities, it seems to be too slow? 
+problem: when run too long, poperties still seems to start to diverge (see long wall trial run)
+# TODO: to resolve above problem, maybe average temperature over certain grid cells
+to do above, can use 
+Oceananigans.AbstractOperations.Average, dimensions is three tuple,
+# TODO: potentially display max and min temp vs time
+yikes, realized that need to max time scale to cfl *diffusive time scale, then for some reason cfl needs to be 0.2, then 
+finally set a diffusive time scale, and then realized that need to incorporate a viscous time scale too. 
+see at 73 minutes, still flaashing? velocity
 =#
-#TODO: figure out if custom forcing takes (x, y, z) or (x, z, t)
 #TODO: organizize file, declare variables as global and make function file 
 #constants and operations
 #TODO: figure out why it seems to be diverging, timestep too large, or, diverges over approx 50min
 #linked with above, dampening?, should besomething to do with viscosity? 
+#TODO: accept external temp files
 const day = 86400;
 const hour = 3600;
 const minute = 60;
@@ -38,14 +58,17 @@ viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
 T_diffusivity = DiffusionParameter(1.46e-7, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 
+#TODO: turn these into profiles 
 T_top = 21.67;
 T_bot = 11.86;
 S_bot = 35.22;
 S_top = 34.18;
-delta_z = 200;
+delta_z = 20; 
 
 geopotential_height = 0; # sea surface height for potential density calculations
+#useful auxilliary functions
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
+findNearest(A::AbstractArray, x) = findmin(abs(A-t)) # returns [nearest value, value index]
 function getMaxAndMin(numPoints, dataSeries)
     myMax = maximum(interior(dataSeries[1], :, 1, :))
     myMin = minimum(interior(dataSeries[1], :, 1, :))
@@ -69,6 +92,7 @@ domain_x = 15scale; # width, in meters
 domain_z = 15scale; #height, in meters
 
 #pipe parameters
+#TODO: make these a struct 
 pipe_radius = 0.5scale;
 pipe_length = 10scale;
 pipe_top_depth = 1scale;
@@ -145,8 +169,7 @@ function  waterBorderMask(x, z)
 end
 waterBorderMask(x, y, z) = waterBorderMask(x, z)
 
-#no forcing option
-noforcing(x, y, z, t) = 0 #TODO: test this 
+
 #setting up just a basic gradient for water column 
 #sets initial t and s
 #TODO:set up container functions for these to allow moving to another file 
@@ -184,6 +207,8 @@ function getBackgroundDensity(z) #takes a positive depth
 end
 
 
+
+
 #setting up model components
 domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
 clock = Clock{eltype(domain_grid)}(time=0);
@@ -207,13 +232,13 @@ closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecula
 # closure = (horizontal_closure, vertical_closure)
 
 
-noforcing(x, y, z) = 0 
-forcing = (u = noforcing,  w = noforcing)
-# u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
-# w_damping_rate = 1/1 #relaxes fields on 1 second time scale
-# u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
-# w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
-# forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
+# noforcing(x, z, t) = 0 
+# forcing = (u = noforcing,  w = noforcing)
+u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale, should be very high
+w_damping_rate = 1/1 #relaxes fields on 1 second time scale, the larger this number, the more friction?
+u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
+w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
+forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
 
 # border_damping_rate = 1/0.000001
 # uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
@@ -260,15 +285,15 @@ initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_den
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-simulation_duration = 15day;
-run_duration = 15minute;
+simulation_duration = 30minute
+run_duration = 2hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
 timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2) #TODO: set max delta t?
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
-add_callback!(simulation, progress_message, IterationInterval(10))
+add_callback!(simulation, progress_message, IterationInterval(50))
 
 
 #fields = Dict("u" => model.velocities.u, "w" => model.velocities.w, "T" => model.tracers.T, "S" => model.tracers.S)
@@ -278,7 +303,7 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = "diffusion and buoyancy no walls test 1"
+filename = "walls molecular diffusivity no sponge layer 50 gradient attempt 2 "
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
@@ -334,7 +359,7 @@ function getIndexFromTime(time, timeSeries)
     @info "Run duration too short, animating until end"
     return numTotFrames
 end
-plot_until_time = -1 #enter -1 to plot whole thing
+plot_until_time = 30minute #enter -1 to plot whole thing
 lastFrame = getIndexFromTime(plot_until_time, times)
 
 #properties
