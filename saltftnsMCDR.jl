@@ -62,8 +62,8 @@ S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_ver
 #TODO: turn these into profiles 
 T_top = 21.67;
 T_bot = 11.86;
-S_bot = 35.22;
-S_top = 34.18;
+S_bot = 34.18;
+S_top = 35.22;
 delta_z = 20; 
 
 geopotential_height = 0; # sea surface height for potential density calculations
@@ -235,14 +235,15 @@ closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecula
 
 # noforcing(x, z, t) = 0 
 # forcing = (u = noforcing,  w = noforcing)
+#sets velocities inside wall to be 0
 u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale, should be very high
-w_damping_rate = 1/1 #relaxes fields on 1 second time scale, the larger this number, the more friction?
+w_damping_rate = 1/0.1 #relaxes fields on 0.11 second time scale
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
 # forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
 
 #this section relaxes the boundaries of the simulation to be that of the ambient ocean
-border_damping_rate = 1/0.000001
+border_damping_rate = 1/0.01
 uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
 uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init)
