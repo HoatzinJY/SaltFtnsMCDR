@@ -11,8 +11,9 @@ using GibbsSeaWater
 using NetCDF
 
 # next run: with sponge
-# realized: STABLE WITH 10x steeper gradient but not this? 
+# realized: STABLE WITH 10x steeper gradient but not this, also unstable once a sponge layer is thrown in 
 #thought: looking at traceradvection term, look at how time step wizard does normal cfl 
+#thought: add nutrients, carbon
 
 
 #= 
@@ -68,7 +69,7 @@ delta_z = 20;
 geopotential_height = 0; # sea surface height for potential density calculations
 #useful auxilliary functions
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
-findNearest(A::AbstractArray, x) = findmin(abs(A-t)) # returns [nearest value, value index]
+findNearest(A::AbstractArray, x) = findmin(abs(A-x)) # returns [nearest value, value index]
 function getMaxAndMin(numPoints, dataSeries)
     myMax = maximum(interior(dataSeries[1], :, 1, :))
     myMin = minimum(interior(dataSeries[1], :, 1, :))
@@ -101,7 +102,7 @@ pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 
 #pumping parameters
-height_displaced = 3scale;
+height_displaced = 2scale;
 initial_pipe_velocity = 0.001scale; #not yet used 
 
 
@@ -176,7 +177,7 @@ waterBorderMask(x, y, z) = waterBorderMask(x, z)
 function T_init(x, z)
     #inside pipe
     if (isInsidePipe(x, z))
-        return T_top - ((T_bot - T_top) / delta_z) * (z + height_displaced)
+        return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
         #outside pipe
     else
         return T_top - ((T_bot - T_top) / delta_z)z
@@ -185,7 +186,7 @@ end
 T_init(x, y, z) = T_init(x, z)
 function S_init(x, z)
     if (isInsidePipe(x, z))
-        return S_top - ((S_bot - S_top) / delta_z) * (z + height_displaced)
+        return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
     else
         return S_top - ((S_bot - S_top) / delta_z)z
     end
@@ -238,14 +239,15 @@ u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale, should be very 
 w_damping_rate = 1/1 #relaxes fields on 1 second time scale, the larger this number, the more friction?
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
-forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
+# forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
 
-# border_damping_rate = 1/0.000001
-# uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
-# uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
-# T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init)
-# S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init)
-#forcing = (u = (u_pipe_wall, uw_border ), w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+#this section relaxes the boundaries of the simulation to be that of the ambient ocean
+border_damping_rate = 1/0.000001
+uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
+uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
+T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init)
+S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init)
+forcing = (u = (u_pipe_wall, uw_border ), w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #TODO, maybe add relaxation @ edges of domain to model "infinite reservoir"? 
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
@@ -303,7 +305,7 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = "walls molecular diffusivity no sponge layer 50 gradient attempt 2 "
+filename = joinpath("Trials","walls molecular diffusivity yes sponge layer 50 gradient attempt 2")
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
