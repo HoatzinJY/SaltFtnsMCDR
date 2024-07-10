@@ -212,7 +212,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model setup test run 1"
+trial_name = "2D model setup test run 2 with max rates"
 
 
 """SET UP MODEL COMPONENTS"""
@@ -293,13 +293,13 @@ boundary_conditions = (T = T_bcs, S = S_bcs)
 noforcing(x, z, t) = 0
 noforcing(x, y, z, t) = noforcing(x, z, t)
 #sets velocities inside wall to be 0
-max_damping_rate = oscillation_frequency #this will most often be 4x time step since time step max is 1/4 this
-u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale, should be very high
-w_damping_rate = 1/0.1 #relaxes fields on 0.11 second time 
+max_damping_rate = oscillation_frequency #this will most often be 4x time step since time step max is 1/4 this TRACER_MIN -->  this shoudl be osicllation frequeny or shortest diffusive time scale TODO: write func getting longest and shortest time scales
+u_damping_rate = 1/max_damping_rate #relaxes fields on 0.1 second time scale, should be very high
+w_damping_rate = 1/max_damping_rate #relaxes fields on 0.11 second time 
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
 #sets sponge layer for parameters on all water borders
-border_damping_rate = 1/0.1
+border_damping_rate = 1/max_damping_rate
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
 #no forcing
@@ -348,13 +348,13 @@ initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_den
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-max_t_step = 0.25*initial_oscillation_time_scale
-simulation_duration = 3minute
-run_duration = 15minute
+max_time_step = 0.25*initial_oscillation_time_scale
+simulation_duration = 1minute
+run_duration = 30minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2, max_time_step = max_t_step) #TODO: set max delta t?
+timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2, max_Δt = max_time_step) #TODO: set max delta t?
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
