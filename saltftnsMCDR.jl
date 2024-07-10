@@ -264,8 +264,8 @@ closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecula
 #initial gradient dζ/dz, assuming z decreases with depth
 #TODO: use this instead of relaxation to imitate infinite reservoir
 initial_T_top_gradient = (T_init(0,0) - T_init(0, 0 - z_grid_spacing))/z_grid_spacing
-initial_T_bottom_gradient = (T_init(0, domain_z) - T_init(0, domain_z + z_grid_spacing))/z_grid_spacing
-initial_S_top_gradient = (S_init(0,0) - S_init(0, 0 - z_grid_spacing))/z_grid_spacing
+initial_T_bottom_gradient = (T_init(0, domain_z + z_grid_spacing) - T_init(0, domain_z))/z_grid_spacing
+initial_S_top_gradient = (S_init(0, 0 - z_grid_spacing) - S_init(0,0))/z_grid_spacing
 initial_S_bottom_gradient = (S_init(0, domain_z) - S_init(0, domain_z + z_grid_spacing))/z_grid_spacing
 #these two only incoporate constant gradient
 T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
@@ -292,9 +292,9 @@ S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target
 #no forcing
 # forcing = (u = noforcing,  w = noforcing)
 #pipe wall velocities only 
-# forcing = (u = u_pipe_wall,  w = w_pipe_wall)
+forcing = (u = u_pipe_wall,  w = w_pipe_wall)
 #pipe wall velocities and property sponge layer 
-forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = T_border, S=S_border)
+#forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = T_border, S=S_border)
 
 
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
@@ -334,8 +334,8 @@ initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_den
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-simulation_duration = 1hour
-run_duration = 3hour
+simulation_duration = 10minute
+run_duration = 45minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -352,7 +352,7 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = joinpath("Trials","walls_yespropertysponge_gradientonlyboundaries")
+filename = joinpath("Trials","walls_nopropertysponge_gradientonlyboundariesNOWCORRECT")
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
