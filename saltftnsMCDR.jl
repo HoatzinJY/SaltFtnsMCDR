@@ -10,10 +10,18 @@ using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
 
-# next run: with sponge
+
+
+#NEXT RUN: NO WALLS TRIAL
+# EVEN WITH CORRECT PERTURBATION IT DIVERGES
 # realized: STABLE WITH 10x steeper gradient but not this, also unstable once a sponge layer is thrown in 
 #thought: looking at traceradvection term, look at how time step wizard does normal cfl 
 #thought: add nutrients, carbon
+
+#think --> look at diffusion, and relaxation term, how to get target from field 
+#think --> look at how to set variable kappa
+#TODO: figure out field argument and how to manipulate 
+#when reading file, maybe use discrete?
 
 
 #= 
@@ -24,15 +32,10 @@ using NetCDF
 - accurately model infinity reservoir
 - figure out issue with temperature --> potentially graph the average field? 
 
-problem: with using only molecular diffusivities, it seems to be too slow? 
-problem: when run too long, poperties still seems to start to diverge (see long wall trial run)
 # TODO: to resolve above problem, maybe average temperature over certain grid cells
 to do above, can use 
 Oceananigans.AbstractOperations.Average, dimensions is three tuple,
-# TODO: potentially display max and min temp vs time
-yikes, realized that need to max time scale to cfl *diffusive time scale, then for some reason cfl needs to be 0.2, then 
-finally set a diffusive time scale, and then realized that need to incorporate a viscous time scale too. 
-see at 73 minutes, still flaashing? velocity
+
 =#
 #TODO: organizize file, declare variables as global and make function file 
 #constants and operations
@@ -64,7 +67,7 @@ T_top = 21.67;
 T_bot = 11.86;
 S_bot = 34.18;
 S_top = 35.22;
-delta_z = 20; 
+delta_z = 200; 
 
 geopotential_height = 0; # sea surface height for potential density calculations
 #useful auxilliary functions
@@ -89,14 +92,14 @@ end
 scale = 1
 x_grid_spacing = 0.05scale;# in meters
 z_grid_spacing = 0.05scale;# in meters
-domain_x = 15scale; # width, in meters
-domain_z = 15scale; #height, in meters
+domain_x = 10scale; # width, in meters
+domain_z = 18scale; #height, in meters
 
 #pipe parameters
 #TODO: make these a struct 
 pipe_radius = 0.5scale;
 pipe_length = 10scale;
-pipe_top_depth = 1scale;
+pipe_top_depth = 3scale;
 pipe_wall_thickness_intended = 0.01scale;
 pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
@@ -172,9 +175,10 @@ waterBorderMask(x, y, z) = waterBorderMask(x, z)
 
 
 #setting up just a basic gradient for water column 
-#sets initial t and s
+#sets initial t and s. Assumes that z will be negative. 
 #TODO:set up container functions for these to allow moving to another file 
-function T_init(x, z)
+#TODO: rename to TInit
+function T_init(x, y, z)
     #inside pipe
     if (isInsidePipe(x, z))
         return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
@@ -183,15 +187,17 @@ function T_init(x, z)
         return T_top - ((T_bot - T_top) / delta_z)z
     end
 end
-T_init(x, y, z) = T_init(x, z)
-function S_init(x, z)
+T_init(x, z) = T_init(x, 0, z)
+T_init_bc(y, z, t) = T_init(0, y, z)
+function S_init(x, y, z)
     if (isInsidePipe(x, z))
         return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
     else
         return S_top - ((S_bot - S_top) / delta_z)z
     end
 end
-S_init(x, y, z) = S_init(x, z)
+S_init(x, z) = S_init(x, 0, z)
+S_init_bc(y, z, t) = S_init(0, y, z)
 function w_init(x, z)
     if (isInsidePipe(x, z))
         #return initial_pipe_velocity;
@@ -200,6 +206,11 @@ function w_init(x, z)
         return 0
     end
 end
+
+
+#more auxilliary functions
+#TODO: get a word for "general water column"  
+#returns background density of the general water column at depth z (before perturbation)
 function getBackgroundDensity(z) #takes a positive depth
     eos = TEOS10EquationOfState() 
     S_abs = gsw_sa_from_sp(S_init(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
@@ -210,46 +221,83 @@ end
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #setting up model components
+
 domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
 clock = Clock{eltype(domain_grid)}(time=0);
 advection = CenteredSecondOrder(); #default, not sure which one to choose
+timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available 
+
+
+#buoyancy model setup
 eos = TEOS10EquationOfState()
 buoyancy = SeawaterBuoyancy(equation_of_state=eos)
 #buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
+
+#tracers & tracer diffusion setup 
 tracers = (:T, :S); #temperature, salinity
-timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available 
-#TODO: currently, these are molecular values. should I add molecular = eddy together? horizontal (along isopycnal), or vertical? Can have non uniform diffusivities in each? 
-#TODO: tells us, effective diffusivity is molecular + eddy diffusivities 
-#TODO: replace values with those in S7.1, DPO, Figure ut what eddy viscosity to use?
-#TODO: make non constant diffusion, via interpolation? graphs? 
-#horizontal & vertical dissipation schemes are different, read here https://mitgcm.readthedocs.io/en/latest/algorithm/algorithm.html#horizontal-dissipation\
 
 """IMPORTANT: order of definition of kappas matter,must define in same order as tracer statement even though finding it later works""";
 closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
 
+# option for using eddy diffusivities
 # horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
 # vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 # closure = (horizontal_closure, vertical_closure)
 
 
-# noforcing(x, z, t) = 0 
-# forcing = (u = noforcing,  w = noforcing)
+#boundary condition setup
+#initial gradient dζ/dz, assuming z decreases with depth
+#TODO: use this instead of relaxation to imitate infinite reservoir
+initial_T_top_gradient = (T_init(0,0) - T_init(0, 0 - z_grid_spacing))/z_grid_spacing
+initial_T_bottom_gradient = (T_init(0, domain_z) - T_init(0, domain_z + z_grid_spacing))/z_grid_spacing
+initial_S_top_gradient = (S_init(0,0) - S_init(0, 0 - z_grid_spacing))/z_grid_spacing
+initial_S_bottom_gradient = (S_init(0, domain_z) - S_init(0, domain_z + z_grid_spacing))/z_grid_spacing
+#these two only incoporate constant gradient
+T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
+S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
+#below incorporates side boundaries as a constant gradient
+#TODO: figure out if use this or sponge layer
+# T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
+# S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
+boundaryConditions = (T = T_bcs, S = S_bcs)
+
+#east/west boundaries take in (y,z,t)
+
+#forcing of various types
+#option for no forcing
+noforcing(x, z, t) = 0 
+forcing = (u = noforcing,  w = noforcing)
+
 #sets velocities inside wall to be 0
 u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale, should be very high
 w_damping_rate = 1/0.1 #relaxes fields on 0.11 second time scale
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
-# forcing = (u = (u_pipe_wall),  w = (w_pipe_wall))
+forcing = (u = u_pipe_wall,  w = w_pipe_wall)
 
 #this section relaxes the boundaries of the simulation to be that of the ambient ocean
-border_damping_rate = 1/0.01
-uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
-uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
+#TODO: is this border def wrong? check 
+border_damping_rate = 1/0.1
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init)
-forcing = (u = (u_pipe_wall, uw_border ), w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
-#TODO, maybe add relaxation @ edges of domain to model "infinite reservoir"? 
+forcing = (T = T_border, S=S_border)
+
+
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
 #sets up model
@@ -263,7 +311,6 @@ set!(model, T=T_init, S=S_init, w=w_init)
 ρ_initial = Field(density_operation)
 compute!(ρ_initial)
 @info "initial ocnditions set"
-
 
 #setting time steps 
 function getMaskedAverage(mask::Function, field)
@@ -289,7 +336,7 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
 simulation_duration = 30minute
-run_duration = 2hour
+run_duration = 15minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -306,7 +353,7 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = joinpath("Trials","walls molecular diffusivity yes sponge layer 50 gradient attempt 2")
+filename = joinpath("Trials","walls molecular diffusivity  yes sponge layer 50 correct signs!")
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
