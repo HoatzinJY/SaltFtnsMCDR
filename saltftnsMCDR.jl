@@ -47,6 +47,7 @@ const day = 86400;
 const hour = 3600;
 const minute = 60;
 const g = 9.806; #gravitational acceleration, in m^2/s
+scale = 1
 
 #TODO: think about which one to use, horiz = along isopycnals, vert = not along isopycnals, from DPO
 #enviroment parameters
@@ -89,7 +90,7 @@ pipe_length = 10scale;
 pipe_top_depth = 3scale;
 pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
 #pumping parameters
-height_displaced = 2scale;
+height_displaced = 0scale;
 initial_pipe_velocity = 0.001scale; #not yet used 
 
 
@@ -211,12 +212,16 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "setup model run 1"
+trial_name = "2d no perturbation yes bcs yes sponge yes walls test"
 
 
 """SET UP MODEL COMPONENTS"""
 #grid spacing
-scale = 1
+#domain size
+domain_x = 10scale # width, in meters
+domain_z = 18scale #height, in meters
+x_center = domain_x / 2;
+#calculating max allowed spacing
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
 oscillation_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 #max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_frequency) #MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
@@ -225,9 +230,6 @@ max_grid_spacing = 0.05 #option for something reasonable
 x_grid_spacing = max_grid_spacing;
 y_grid_spacing = max_grid_spacing;
 z_grid_spacing = max_grid_spacing;
-#domain size
-domain_x = 10scale # width, in meters
-domain_z = 18scale #height, in meters
 #calculated resolutions (number of grid cells)
 x_res = floor(Int, domain_x / x_grid_spacing);
 y_res = 4 #4 cells thick in the "flat" direction
@@ -237,13 +239,12 @@ domain_y = y_res * y_grid_spacing
 #miscellaneous
 pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 locs = (Center(), Center(), Center());
-x_center = domain_x / 2;
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
 #set up domain grid 
-domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
-#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded)) #2d option, breaks with sponge
+#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
+domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded)) #2d option
 
 #MISCELLANEOUS
 clock = Clock{eltype(domain_grid)}(time=0);
@@ -347,7 +348,7 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
 simulation_duration = 1day
-run_duration = 5hour
+run_duration = 3minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
