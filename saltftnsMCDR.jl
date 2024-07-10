@@ -426,17 +426,17 @@ axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
 fig[1, :] = Label(fig, title)
 
 xT, yT, zT = nodes(T_t[1])
-ax_T = Axis(fig[2, 1]; title="temperature", axis_kwargs...)
+ax_T = Axis(fig[2, 1]; title="temperature[C]", axis_kwargs...)
 hm_T = heatmap!(ax_T, xT, zT, Tₙ; colorrange=T_range, colormap=:thermal) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[2, 2], hm_T, label="C")
 
 xS, yS, zS = nodes(S_t[1])
-ax_S = Axis(fig[3, 1]; title="salinity", axis_kwargs...)
+ax_S = Axis(fig[3, 1]; title="salinity[ppt]", axis_kwargs...)
 hm_S = heatmap!(ax_S, xS, zS, Sₙ; colorrange=S_range, colormap=:haline) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[3, 2], hm_S, label="ppt")
 
 xρ, yρ, zρ = nodes(ρ_t[1])
-ax_ρ = Axis(fig[4, 1]; title="potential density", axis_kwargs...)
+ax_ρ = Axis(fig[4, 1]; title="potential density[kg/m^3]", axis_kwargs...)
 hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=:viridis) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
 
@@ -458,17 +458,20 @@ fig[1, :] = Label(fig, title)
 
 xw, yw, zw = nodes(w_t[1])
 ax_w = Axis(fig[2, 1]; title="w velocity", axis_kwargs...)
-hm_w = heatmap!(ax_w, xw, zw, wₙ; colorrange=w_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+w_colorbar_range = (-max(abs(w_range[1]), abs(w_range[2])), max(abs(w_range[1]), abs(w_range[2])))
+hm_w = heatmap!(ax_w, xw, zw, wₙ; colorrange=w_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[2, 2], hm_w, label="m/s")
 
 xu, yu, zu = nodes(u_t[1])
 ax_u = Axis(fig[3, 1]; title="u velocity", axis_kwargs...)
-hm_u = heatmap!(ax_u, xu, zu, uₙ; colorrange=u_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+u_colorbar_range = (-max(abs(u_range[1]), abs(u_range[2])), max(abs(u_range[1]), abs(u_range[2])))
+hm_u = heatmap!(ax_u, xu, zu, uₙ; colorrange=u_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[3, 2], hm_u, label="m/s")
 
 xζ, yζ, zζ = nodes(ζ_t[1])
 ax_ζ = Axis(fig[4, 1]; title="vorticity", axis_kwargs...)
-hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+ζ_colorbar_range = (-max(abs(ζ_range[1]), abs(ζ_range[2])), max(abs(ζ_range[1]), abs(ζ_range[2])))
+hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
 
 fig
