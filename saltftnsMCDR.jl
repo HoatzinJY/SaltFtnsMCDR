@@ -172,9 +172,10 @@ function T_init(x, y, z)
     end
 end
 T_init(x, z) = T_init(x, 0, z)
-T_init(x, y, z, t) = T_init(x, 0, z)
 T_init_bc(y, z, t) = T_init(0, 0, z)
 T_init_bc(z, t) = T_init(0, z)
+T_init_target(x, z, t) = T_init(x, 0, z)
+T_init_target(x, y, z, t) = T_init(x, 0, z)
 function S_init(x, y, z)
     if (isInsidePipe(x, z))
         return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
@@ -183,9 +184,10 @@ function S_init(x, y, z)
     end
 end
 S_init(x, z) = S_init(x, 0, z)
-S_init(x, y, z, t) = S_init(x, 0, z)
 S_init_bc(y, z, t) = S_init(0, 0, z)
 S_init_bc(z, t) = S_init(0, z)
+S_init_target(x, z, t) = S_init(x, 0, z)
+S_init_target(x, y, z, t) = S_init(x, 0, z)
 function w_init(x, y, z)
     if (isInsidePipe(x, z))
         #return initial_pipe_velocity;
@@ -296,8 +298,8 @@ u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
 #sets sponge layer for parameters on all water borders
 border_damping_rate = 1/0.1
-T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init)
-S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init)
+T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
+S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 # pipe wall velocities only 
