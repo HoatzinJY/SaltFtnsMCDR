@@ -274,34 +274,33 @@ S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gr
 #TODO: figure out if use this or sponge layer
 # T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
 # S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
-boundaryConditions = (T = T_bcs, S = S_bcs)
+boundary_conditions = (T = T_bcs, S = S_bcs)
 
-#east/west boundaries take in (y,z,t)
 
 #forcing of various types
 #option for no forcing
 noforcing(x, z, t) = 0 
-forcing = (u = noforcing,  w = noforcing)
-
 #sets velocities inside wall to be 0
 u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale, should be very high
-w_damping_rate = 1/0.1 #relaxes fields on 0.11 second time scale
+w_damping_rate = 1/0.1 #relaxes fields on 0.11 second time 
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
-forcing = (u = u_pipe_wall,  w = w_pipe_wall)
-
-#this section relaxes the boundaries of the simulation to be that of the ambient ocean
-#TODO: is this border def wrong? check 
+#sets sponge layer for parameters on all water borders
 border_damping_rate = 1/0.1
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init)
-forcing = (T = T_border, S=S_border)
+#no forcing
+# forcing = (u = noforcing,  w = noforcing)
+#pipe wall velocities only 
+# forcing = (u = u_pipe_wall,  w = w_pipe_wall)
+#pipe wall velocities and property sponge layer 
+forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = T_border, S=S_border)
 
 
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
 #sets up model
-model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing)
+model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing, boundary_conditions)
 @info "model made"
 #helper functions
 density_operation = seawater_density(model; geopotential_height)
@@ -335,8 +334,8 @@ initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_den
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-simulation_duration = 30minute
-run_duration = 15minute
+simulation_duration = 1hour
+run_duration = 3hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -353,7 +352,7 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = joinpath("Trials","walls molecular diffusivity  yes sponge layer 50 correct signs!")
+filename = joinpath("Trials","walls_yespropertysponge_gradientonlyboundaries")
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
