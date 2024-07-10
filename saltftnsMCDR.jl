@@ -172,6 +172,7 @@ function T_init(x, y, z)
     end
 end
 T_init(x, z) = T_init(x, 0, z)
+T_init(x, y, z, t) = T_init(x, 0, z)
 T_init_bc(y, z, t) = T_init(0, 0, z)
 T_init_bc(z, t) = T_init(0, z)
 function S_init(x, y, z)
@@ -182,6 +183,7 @@ function S_init(x, y, z)
     end
 end
 S_init(x, z) = S_init(x, 0, z)
+S_init(x, y, z, t) = S_init(x, 0, z)
 S_init_bc(y, z, t) = S_init(0, 0, z)
 S_init_bc(z, t) = S_init(0, z)
 function w_init(x, y, z)
@@ -207,7 +209,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "3D no forcing yes perturbation, value and gradient walls "
+trial_name = "setup model run 1"
 
 
 """SET UP MODEL COMPONENTS"""
@@ -239,7 +241,7 @@ x_center = domain_x / 2;
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
 #set up domain grid 
 domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
-#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded)) #2d option
+#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded)) #2d option, breaks with sponge
 
 #MISCELLANEOUS
 clock = Clock{eltype(domain_grid)}(time=0);
@@ -297,11 +299,11 @@ border_damping_rate = 1/0.1
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init)
 #no forcing
-forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
+# forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 # pipe wall velocities only 
-# forcing = (u = u_pipe_wall,  w = w_pipe_wall)
+# forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-#forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = T_border, S=S_border)
+forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = T_border, S=S_border)
 
 
 #BIOGEOCHEMISTRY
@@ -343,7 +345,7 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
 simulation_duration = 1day
-run_duration = 1minute
+run_duration = 5hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -371,7 +373,6 @@ run!(simulation; pickup=false)
 
 
 #visualize simulation
-#may want to average
 
 output_filename = filename * ".jld2"
 u_t = FieldTimeSeries(output_filename, "u")
@@ -383,6 +384,8 @@ S_t = FieldTimeSeries(output_filename, "S")
 times = u_t.times
 n = Observable(1)
 Observable(1)
+@info @sprintf("Finished extracting time series. Simulation total run time %.3f seconds | %.3f minutes", times[end], times[end]/minute)
+
 
 uₙ = @lift interior(u_t[$n], :, 1, :)
 wₙ = @lift interior(w_t[$n], :, 1, :)
@@ -390,6 +393,7 @@ wₙ = @lift interior(w_t[$n], :, 1, :)
 Tₙ = @lift interior(T_t[$n], :, 1, :)
 Sₙ = @lift interior(S_t[$n], :, 1, :)
 ρₙ = @lift interior(ρ_t[$n], :, 1, :)
+@info "finished extracting data as arrays"
 
 num_Data_Points = length(times)
 #very inefficient way of getting max/min, need to update
@@ -399,6 +403,7 @@ u_range = getMaxAndMin(num_Data_Points, u_t)
 w_range = getMaxAndMin(num_Data_Points, w_t)
 ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
 ζ_range = getMaxAndMin(num_Data_Points, ζ_t)
+@info "finished getting max and min of each"
 
 
 
@@ -415,8 +420,8 @@ function getIndexFromTime(time, timeSeries)
     end
     @info "Run duration too short, animating until end"
     return numTotFrames
-end
-plot_until_time = 30minute #enter -1 to plot whole thing
+end 
+plot_until_time = -1 #enter -1 to plot whole thing
 lastFrame = getIndexFromTime(plot_until_time, times)
 
 #properties
@@ -482,6 +487,8 @@ record(fig, filename * "velocities.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
+
+@info @sprintf("Done. Simulation total run time %.3f seconds | %.3f minutes", times[end], times[end]/minute)
 
 
 
