@@ -10,7 +10,7 @@ using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
 
-
+#IF ADD IN MORE TRACERS, LOOK FOR LINES LABELED TRACER_MIN, need to edit 
 
 #NEXT RUN: NO WALLS TRIAL
 # EVEN WITH CORRECT PERTURBATION IT DIVERGES
@@ -90,7 +90,7 @@ pipe_length = 10scale;
 pipe_top_depth = 3scale;
 pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
 #pumping parameters
-height_displaced = 0scale;
+height_displaced = 2scale;
 initial_pipe_velocity = 0.001scale; #not yet used 
 
 
@@ -212,7 +212,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2d no perturbation yes bcs yes sponge yes walls test"
+trial_name = "2D model setup test run 1"
 
 
 """SET UP MODEL COMPONENTS"""
@@ -224,7 +224,7 @@ x_center = domain_x / 2;
 #calculating max allowed spacing
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
 oscillation_frequency =  sqrt((g/1000) * surrounding_density_gradient)
-#max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_frequency) #MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
+#max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_frequency) #TRACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
 max_grid_spacing = 0.05 #option for something reasonable
 #spacing declarations (grid size)
 x_grid_spacing = max_grid_spacing;
@@ -293,6 +293,7 @@ boundary_conditions = (T = T_bcs, S = S_bcs)
 noforcing(x, z, t) = 0
 noforcing(x, y, z, t) = noforcing(x, z, t)
 #sets velocities inside wall to be 0
+max_damping_rate = oscillation_frequency #this will most often be 4x time step since time step max is 1/4 this
 u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale, should be very high
 w_damping_rate = 1/0.1 #relaxes fields on 0.11 second time 
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
@@ -340,19 +341,20 @@ end
 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T
-diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
+diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
 initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
 initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-simulation_duration = 1day
-run_duration = 3minute
+max_t_step = 0.25*initial_oscillation_time_scale
+simulation_duration = 3minute
+run_duration = 15minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2) #TODO: set max delta t?
+timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2, max_time_step = max_t_step) #TODO: set max delta t?
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
