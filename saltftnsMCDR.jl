@@ -42,6 +42,7 @@ Oceananigans.AbstractOperations.Average, dimensions is three tuple,
 #TODO: figure out why it seems to be diverging, timestep too large, or, diverges over approx 50min
 #linked with above, dampening?, should besomething to do with viscosity? 
 #TODO: accept external temp files
+"""CONSTANTS AND PHYSICAL PROPERTIES"""
 const day = 86400;
 const hour = 3600;
 const minute = 60;
@@ -62,15 +63,12 @@ viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
 T_diffusivity = DiffusionParameter(1.46e-7, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 
-#TODO: turn these into profiles 
-T_top = 21.67;
-T_bot = 11.86;
-S_bot = 34.18;
-S_top = 35.22;
-delta_z = 200; 
 
 geopotential_height = 0; # sea surface height for potential density calculations
 #useful auxilliary functions
+
+
+"""COMPUTATIONAL FUNCTIONS"""
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
 findNearest(A::AbstractArray, x) = findmin(abs(A-x)) # returns [nearest value, value index]
 function getMaxAndMin(numPoints, dataSeries)
@@ -84,38 +82,18 @@ function getMaxAndMin(numPoints, dataSeries)
 end
 
 
-#resolution parameters TODO determine best ones
-#when set to 0.1, unstable, seems to be increasing velocity drastically
-#note: be careful of time resolution needed, spacing resoslution needed
-#user set
-#grid spacing
-scale = 1
-x_grid_spacing = 0.05scale;# in meters
-z_grid_spacing = 0.05scale;# in meters
-domain_x = 10scale; # width, in meters
-domain_z = 18scale; #height, in meters
-
-#pipe parameters
+"""PIPE AND PUMPING PARAMETERS"""
 #TODO: make these a struct 
 pipe_radius = 0.5scale;
 pipe_length = 10scale;
 pipe_top_depth = 3scale;
-pipe_wall_thickness_intended = 0.01scale;
-pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
-@info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
-
+pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
 #pumping parameters
 height_displaced = 2scale;
 initial_pipe_velocity = 0.001scale; #not yet used 
 
 
-#calculated
-x_res = floor(Int, domain_x / x_grid_spacing);
-z_res = floor(Int, domain_z / z_grid_spacing);
-locs = (Center(), Face(), Center());
-x_center = domain_x / 2;
-
-#masks
+"""MASKING FUNCTIONS"""
 function isInsidePipe(x, z)
     if (x > (x_center - pipe_radius) && x < (x_center + pipe_radius) && z < -pipe_top_depth && z > -(pipe_top_depth + pipe_length))
         return true
@@ -164,8 +142,9 @@ function borderMask(x, z)
         end
 end
 borderMask(x, y, z) = borderMask(x, z)
+#border mask on borders that are in contact with the water, 2 grid cells thick
 function  waterBorderMask(x, z)
-    if(min(x, domain_x - x) < x_grid_spacing || (domain_z + z) < z_grid_spacing)
+    if(min(x, domain_x - x) < 2(x_grid_spacing) || (domain_z + z) < 2(z_grid_spacing))
         return 1
     else
         return 0
@@ -174,10 +153,15 @@ end
 waterBorderMask(x, y, z) = waterBorderMask(x, z)
 
 
-#setting up just a basic gradient for water column 
+"""INITIAL CONDITIONS & WATER COLUMN CONDITIONS"""
 #sets initial t and s. Assumes that z will be negative. 
 #TODO:set up container functions for these to allow moving to another file 
 #TODO: rename to TInit
+T_top = 21.67;
+T_bot = 11.86;
+S_bot = 34.18;
+S_top = 35.22;
+delta_z = 200; 
 function T_init(x, y, z)
     #inside pipe
     if (isInsidePipe(x, z))
@@ -188,7 +172,8 @@ function T_init(x, y, z)
     end
 end
 T_init(x, z) = T_init(x, 0, z)
-T_init_bc(y, z, t) = T_init(0, y, z)
+T_init_bc(y, z, t) = T_init(0, 0, z)
+T_init_bc(z, t) = T_init(0, z)
 function S_init(x, y, z)
     if (isInsidePipe(x, z))
         return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
@@ -197,8 +182,9 @@ function S_init(x, y, z)
     end
 end
 S_init(x, z) = S_init(x, 0, z)
-S_init_bc(y, z, t) = S_init(0, y, z)
-function w_init(x, z)
+S_init_bc(y, z, t) = S_init(0, 0, z)
+S_init_bc(z, t) = S_init(0, z)
+function w_init(x, y, z)
     if (isInsidePipe(x, z))
         #return initial_pipe_velocity;
         return 0
@@ -206,49 +192,67 @@ function w_init(x, z)
         return 0
     end
 end
+w_init(x, z) = w_init(x, 0, z)
 
-
-#more auxilliary functions
 #TODO: get a word for "general water column"  
 #returns background density of the general water column at depth z (before perturbation)
-function getBackgroundDensity(z) #takes a positive depth
+function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)#takes a positive depth
     eos = TEOS10EquationOfState() 
-    S_abs = gsw_sa_from_sp(S_init(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
-    T_consv = gsw_ct_from_t(S_abs, T_init(0,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
+    S_abs = gsw_sa_from_sp(Sfunc(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
+    T_consv = gsw_ct_from_t(S_abs, Tfunc(0,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
     return TEOS10.ρ(T_consv, S_abs, z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
 end
 
 
 
 
+"""NAME OF TRIAL"""
+trial_name = "3D no forcing yes perturbation, value and gradient walls "
 
 
+"""SET UP MODEL COMPONENTS"""
+#grid spacing
+scale = 1
+surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
+oscillation_frequency =  sqrt((g/1000) * surrounding_density_gradient)
+#max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_frequency) #MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
+max_grid_spacing = 0.05 #option for something reasonable
+#spacing declarations (grid size)
+x_grid_spacing = max_grid_spacing;
+y_grid_spacing = max_grid_spacing;
+z_grid_spacing = max_grid_spacing;
+#domain size
+domain_x = 10scale # width, in meters
+domain_z = 18scale #height, in meters
+#calculated resolutions (number of grid cells)
+x_res = floor(Int, domain_x / x_grid_spacing);
+y_res = 4 #4 cells thick in the "flat" direction
+z_res = floor(Int, domain_z / z_grid_spacing);
+#"flat" dimension domain size
+domain_y = y_res * y_grid_spacing
+#miscellaneous
+pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
+locs = (Center(), Center(), Center());
+x_center = domain_x / 2;
+@info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
+@info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
+@info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
+#set up domain grid 
+domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
+#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded)) #2d option
 
-
-
-
-
-
-
-
-
-
-
-
-#setting up model components
-
-domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
+#MISCELLANEOUS
 clock = Clock{eltype(domain_grid)}(time=0);
 advection = CenteredSecondOrder(); #default, not sure which one to choose
 timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available 
 
 
-#buoyancy model setup
+#BUOYANCY MODEL
 eos = TEOS10EquationOfState()
 buoyancy = SeawaterBuoyancy(equation_of_state=eos)
 #buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
 
-#tracers & tracer diffusion setup 
+#TRACERS & DIFFUSION CLOSURES
 tracers = (:T, :S); #temperature, salinity
 
 """IMPORTANT: order of definition of kappas matter,must define in same order as tracer statement even though finding it later works""";
@@ -260,7 +264,7 @@ closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecula
 # closure = (horizontal_closure, vertical_closure)
 
 
-#boundary condition setup
+#BOUNDARY CONDITIONS
 #initial gradient dζ/dz, assuming z decreases with depth
 #TODO: use this instead of relaxation to imitate infinite reservoir
 initial_T_top_gradient = (T_init(0,0) - T_init(0, 0 - z_grid_spacing))/z_grid_spacing
@@ -268,18 +272,21 @@ initial_T_bottom_gradient = (T_init(0, domain_z + z_grid_spacing) - T_init(0, do
 initial_S_top_gradient = (S_init(0, 0 - z_grid_spacing) - S_init(0,0))/z_grid_spacing
 initial_S_bottom_gradient = (S_init(0, domain_z) - S_init(0, domain_z + z_grid_spacing))/z_grid_spacing
 #these two only incoporate constant gradient
-T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
-S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
+# T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
+# S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
+
 #below incorporates side boundaries as a constant gradient
 #TODO: figure out if use this or sponge layer
-# T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
-# S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
+T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
+S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(S_init_bc), west = ValueBoundaryCondition(S_init_bc))
+
 boundary_conditions = (T = T_bcs, S = S_bcs)
 
 
-#forcing of various types
+#FORCING FUNCTIONS
 #option for no forcing
-noforcing(x, z, t) = 0 
+noforcing(x, z, t) = 0
+noforcing(x, y, z, t) = noforcing(x, z, t)
 #sets velocities inside wall to be 0
 u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale, should be very high
 w_damping_rate = 1/0.1 #relaxes fields on 0.11 second time 
@@ -290,13 +297,14 @@ border_damping_rate = 1/0.1
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init)
 #no forcing
-# forcing = (u = noforcing,  w = noforcing)
-#pipe wall velocities only 
-forcing = (u = u_pipe_wall,  w = w_pipe_wall)
+forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
+# pipe wall velocities only 
+# forcing = (u = u_pipe_wall,  w = w_pipe_wall)
 #pipe wall velocities and property sponge layer 
 #forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = T_border, S=S_border)
 
 
+#BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
 #sets up model
@@ -309,7 +317,7 @@ density_operation = seawater_density(model; geopotential_height)
 set!(model, T=T_init, S=S_init, w=w_init)
 ρ_initial = Field(density_operation)
 compute!(ρ_initial)
-@info "initial ocnditions set"
+@info "initial conditions set"
 
 #setting time steps 
 function getMaskedAverage(mask::Function, field)
@@ -328,14 +336,14 @@ end
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
-surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length) - getBackgroundDensity(-pipe_top_depth))/pipe_length#takes average for unaltered water column
+surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
 initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
-initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_density_gradient) #TODO: think about implmeenting for non initial times
+initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-simulation_duration = 10minute
-run_duration = 45minute
+simulation_duration = 1day
+run_duration = 1minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -352,7 +360,7 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
-filename = joinpath("Trials","walls_nopropertysponge_gradientonlyboundariesNOWCORRECT")
+filename = joinpath("Trials",trial_name)
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
@@ -524,32 +532,41 @@ end
 density_field = Field(density_operation)
 compute!(density_field)
 
-fig = Figure()
-title = "initial conditions"
-Label(fig[0, :], title)
-x = xnodes(model.tracers.T)
-z = znodes(model.tracers.T)
+#function takes a model
+function plotInitialConditions(m)
+    m = model
+    geopotential_height = 0
+    density_operation = density_operation = seawater_density(m; geopotential_height)
+    density_field = Field(density_operation)
+    compute!(density_field)
 
-axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
+    fig = Figure()
+    title = "initial conditions"
+    Label(fig[0, :], title)
+    x = xnodes(m.tracers.T)
+    z = znodes(m.tracers.T)
 
-ax1 = Axis(fig[1, 1]; title="Temperature (C)", axis_kwargs...)
-T_init_matrix = interior(model.tracers.T, :, 1, :)
-T_lims = (minimum(T_init_matrix), maximum(T_init_matrix));
-hm1 = heatmap!(ax1, x, z, T_init_matrix, colorrange=T_lims, colormap=:thermal, interpolate=true)
-Colorbar(fig[1, 2], hm1)
+    axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
 
-ax2 = Axis(fig[2, 1]; title="Salinity (ppt)", axis_kwargs...)
-S_init_matrix = interior(model.tracers.S, :, 1, :)
-S_lims = (minimum(S_init_matrix), maximum(S_init_matrix));
-hm2 = heatmap!(ax2, x, z, S_init_matrix, colorrange=S_lims, colormap=:haline, interpolate=true)
-Colorbar(fig[2, 2], hm2)
+    ax1 = Axis(fig[1, 1]; title="Temperature (C)", axis_kwargs...)
+    T_init_matrix = interior(m.tracers.T, :, 1, :)
+    T_lims = (minimum(T_init_matrix), maximum(T_init_matrix));
+    hm1 = heatmap!(ax1, x, z, T_init_matrix, colorrange=T_lims, colormap=:thermal, interpolate=true)
+    Colorbar(fig[1, 2], hm1)
 
-ax3 = Axis(fig[3, 1]; title="Density (kg/m^3)", axis_kwargs...)
-ρ_init_matrix = interior(density_field, :, 1, :)
-ρ_lims = (minimum(ρ_init_matrix), maximum(ρ_init_matrix));
-hm3 = heatmap!(ax3, x, z, ρ_init_matrix, colorrange=ρ_lims, colormap=Reverse(:viridis), interpolate=true)
-Colorbar(fig[3, 2], hm3)
-fig
+    ax2 = Axis(fig[2, 1]; title="Salinity (ppt)", axis_kwargs...)
+    S_init_matrix = interior(m.tracers.S, :, 1, :)
+    S_lims = (minimum(S_init_matrix), maximum(S_init_matrix));
+    hm2 = heatmap!(ax2, x, z, S_init_matrix, colorrange=S_lims, colormap=:haline, interpolate=true)
+    Colorbar(fig[2, 2], hm2)
+
+    ax3 = Axis(fig[3, 1]; title="Density (kg/m^3)", axis_kwargs...)
+    ρ_init_matrix = interior(density_field, :, 1, :)
+    ρ_lims = (minimum(ρ_init_matrix), maximum(ρ_init_matrix));
+    hm3 = heatmap!(ax3, x, z, ρ_init_matrix, colorrange=ρ_lims, colormap=Reverse(:viridis), interpolate=true)
+    Colorbar(fig[3, 2], hm3)
+    return fig
+end 
 
 #check that model has reset - plot velocities
 fig = Figure()
@@ -574,8 +591,8 @@ Colorbar(fig[1, 2], hm2)
 display(fig)
 
 #plotting streamlines: need to write up an troubleshoot 
-x_spacings = xspacings(domain_grid, Center(), Face(), Center())
-z_spacings = zspacings(domain_grid, Center(), Face(), Center())
+x_spacings = xspacings(domain_grid, Center(), Center(), Center())
+z_spacings = zspacings(domain_grid, Center(), Center(), Center())
 u_init_matrix = interior(model.velocities.u, :, 1, :)
 w_init_matrix = interior(model.velocities.w, :, 1, :)
 x = xnodes(model.tracers.T)
@@ -603,5 +620,5 @@ fig
 # domain_arr = nodes(domain_grid, locs; reshape = true)
 # pipe_interior_grid_x = AbstractArray{Float64, 3}
 
-x_spacings = xspacings(domain_grid, Center(), Face(), Center())
-z_spacings = zspacings(domain_grid, Center(), Face(), Center())
+x_spacings = xspacings(domain_grid, Center(), Center(), Center())
+z_spacings = zspacings(domain_grid, Center(), Center(), Center())
