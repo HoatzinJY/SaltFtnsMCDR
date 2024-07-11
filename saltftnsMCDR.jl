@@ -212,7 +212,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model setup test run 2 with manual max rates long"
+trial_name = "2D manual grid no value bcs max oscillation scale "
 
 """SET UP MODEL COMPONENTS"""
 #grid spacing
@@ -224,8 +224,9 @@ x_center = domain_x / 2;
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
 N =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/N
-#max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_period) #TRACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
-max_grid_spacing = 0.05 #option for something reasonable
+@info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
+#max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_period) #0.0004m RACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
+max_grid_spacing = 0.05 #option for something bigger for testing
 #spacing declarations (grid size)
 x_grid_spacing = max_grid_spacing;
 y_grid_spacing = max_grid_spacing;
@@ -243,6 +244,7 @@ locs = (Center(), Center(), Center());
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
 #set up domain grid 
+#BOUNDED OPTIONS
 #3d option (4 cell) 
 #domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
 #2d option  
@@ -279,13 +281,13 @@ initial_T_bottom_gradient = (T_init(0, domain_z + z_grid_spacing) - T_init(0, do
 initial_S_top_gradient = (S_init(0, 0 - z_grid_spacing) - S_init(0,0))/z_grid_spacing
 initial_S_bottom_gradient = (S_init(0, domain_z) - S_init(0, domain_z + z_grid_spacing))/z_grid_spacing
 #these two only incoporate constant gradient
-# T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
-# S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
+T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
+S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
 
 #below incorporates side boundaries as a constant gradient
 #TODO: figure out if use this or sponge layer
-T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
-S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(S_init_bc), west = ValueBoundaryCondition(S_init_bc))
+# T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
+# S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(S_init_bc), west = ValueBoundaryCondition(S_init_bc))
 
 boundary_conditions = (T = T_bcs, S = S_bcs)
 
@@ -302,7 +304,7 @@ max_time_step = 0.25 * oscillation_period #this sets max time step to be 1/4 the
 noforcing(x, z, t) = 0
 noforcing(x, y, z, t) = noforcing(x, z, t)
 #sets velocities inside wall to be 0
-max_damping_rate = 3*max_time_step 
+max_damping_rate = 3*max_time_step #this is the max frequency, eg. can only choose damping timescales bigger  
 u_damping_rate = 1/max_damping_rate #relaxes fields on 0.1 second time scale, should be very high
 w_damping_rate = 1/max_damping_rate #relaxes fields on 0.11 second time 
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
@@ -349,17 +351,20 @@ function getMaskedAverage(mask::Function, field)
 end
 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
-# diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T
+initial_travel_velocity = 0.01 # a number just to set an initial time step, determined from initial runs starting around 1ms
+initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
+# diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T #to use when horizontal and vertical diffusivities are used
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
 initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
 initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
-initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-max_time_step = 0.25*initial_oscillation_period # more in depth than above 
-simulation_duration = 1day
-run_duration = 1hour
+
+initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_period, viscous_time_scale, initial_advection_time_scale)
+max_time_step = initial_oscillation_period #this will be longest oscillation since parcel is densest 
+simulation_duration = 5minute
+run_duration = 15minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -377,7 +382,9 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 filename = joinpath("Trials",trial_name)
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(30), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
+#time interval option
+#simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(30), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
 run!(simulation; pickup=false)
