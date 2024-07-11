@@ -11,6 +11,7 @@ using GibbsSeaWater
 using NetCDF
 
 #IF ADD IN MORE TRACERS, LOOK FOR LINES LABELED TRACER_MIN, need to edit 
+#if want to run lab scale, bounded, look for LAB_SET
 
 #NEXT RUN: NO WALLS TRIAL
 # EVEN WITH CORRECT PERTURBATION IT DIVERGES
@@ -212,12 +213,12 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D manual grid no value bcs max oscillation scale "
+trial_name = "2D manual grid periodic x max oscillation scale "
 
 """SET UP MODEL COMPONENTS"""
 #grid spacing
 #domain size
-domain_x = 10scale # width, in meters
+domain_x = 15scale # width, in meters
 domain_z = 18scale #height, in meters
 x_center = domain_x / 2;
 #calculating max allowed spacing
@@ -244,11 +245,15 @@ locs = (Center(), Center(), Center());
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
 #set up domain grid 
-#BOUNDED OPTIONS
+#BOUNDED OPTIONS (LAB_SET)
 #3d option (4 cell) 
 #domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
 #2d option  
-domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
+# domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
+#PERIODIC OPTION
+#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Periodic, Periodic, Bounded))
+#2d option  
+domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
 
 #MISCELLANEOUS
 clock = Clock{eltype(domain_grid)}(time=0);
@@ -280,15 +285,15 @@ initial_T_top_gradient = (T_init(0,0) - T_init(0, 0 - z_grid_spacing))/z_grid_sp
 initial_T_bottom_gradient = (T_init(0, domain_z + z_grid_spacing) - T_init(0, domain_z))/z_grid_spacing
 initial_S_top_gradient = (S_init(0, 0 - z_grid_spacing) - S_init(0,0))/z_grid_spacing
 initial_S_bottom_gradient = (S_init(0, domain_z) - S_init(0, domain_z + z_grid_spacing))/z_grid_spacing
+
 #these two only incoporate constant gradient
 T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
 S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
 
-#below incorporates side boundaries as a constant gradient
+#below incorporates side boundaries as a constant gradient, CANT DO WITH PERIODIC (LAB_SET)
 #TODO: figure out if use this or sponge layer
 # T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
 # S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(S_init_bc), west = ValueBoundaryCondition(S_init_bc))
-
 boundary_conditions = (T = T_bcs, S = S_bcs)
 
 
@@ -363,7 +368,7 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_period, viscous_time_scale, initial_advection_time_scale)
 max_time_step = initial_oscillation_period #this will be longest oscillation since parcel is densest 
-simulation_duration = 5minute
+simulation_duration = 10minute
 run_duration = 15minute
 
 #running model
