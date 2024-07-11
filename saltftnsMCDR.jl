@@ -222,8 +222,9 @@ domain_z = 18scale #height, in meters
 x_center = domain_x / 2;
 #calculating max allowed spacing
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
-oscillation_frequency =  sqrt((g/1000) * surrounding_density_gradient)
-#max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_frequency) #TRACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
+N =  sqrt((g/1000) * surrounding_density_gradient)
+oscillation_period = 2π/N
+#max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_period) #TRACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
 max_grid_spacing = 0.05 #option for something reasonable
 #spacing declarations (grid size)
 x_grid_spacing = max_grid_spacing;
@@ -291,10 +292,10 @@ boundary_conditions = (T = T_bcs, S = S_bcs)
 
 #MANUALLY SET MAX TIME STEP, FOR FORCING FUNCTIONS RELAXATION RATE 
 #this sets 
-# max_time_step = 0.25 * oscillation_frequency #this sets max time step to be 1/4 the oscillation frequency
+max_time_step = 0.25 * oscillation_period #this sets max time step to be 1/4 the oscillation frequency
 #this sets a max ∇T time step manaully.  set this to be larger than what you think the time step will be
 #provides the option to use this in determining relaxation rate instead of oscillation time scale --> allows bigger steps than 1/4 oscillation time scale 
-max_time_step = 0.3 #in seconds
+# max_time_step = 0.3 #in seconds
 
 #FORCING FUNCTIONS
 #option for no forcing
@@ -352,11 +353,11 @@ min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
 initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
-initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
+initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-#max_time_step = 0.25*initial_oscillation_time_scale # currently, max time step is set above 
+max_time_step = 0.25*initial_oscillation_period # more in depth than above 
 simulation_duration = 1day
 run_duration = 1hour
 
