@@ -213,10 +213,9 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D manual grid periodic x max oscillation scale "
+trial_name = "2D small grid everything else set"
 
 """SET UP MODEL COMPONENTS"""
-#grid spacing
 #domain size
 domain_x = 15scale # width, in meters
 domain_z = 18scale #height, in meters
@@ -226,8 +225,12 @@ surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_leng
 N =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/N
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
+#grid spacing
+#max_grid_spacing = 0.05 #manual option
 #max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_period) #0.0004m RACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
-max_grid_spacing = 0.05 #option for something bigger for testing
+memory = 64 #computer memory in GB
+max_grid_spacing = max(domain_x, domain_z)/sqrt(((memory/32) * 100000000)) #for 2D, max that computer can handle
+# max_grid_spacing = max(domain_x, domain_z)/sqrt(((memory/32) * 100000000)/4) #for 2D, max that computer can handle
 #spacing declarations (grid size)
 x_grid_spacing = max_grid_spacing;
 y_grid_spacing = max_grid_spacing;
@@ -368,8 +371,8 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_period, viscous_time_scale, initial_advection_time_scale)
 max_time_step = initial_oscillation_period #this will be longest oscillation since parcel is densest 
-simulation_duration = 10minute
-run_duration = 15minute
+simulation_duration = 10hour
+run_duration =  3minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -468,7 +471,7 @@ Colorbar(fig[3, 2], hm_S, label="ppt")
 
 xρ, yρ, zρ = nodes(ρ_t[1])
 ax_ρ = Axis(fig[4, 1]; title="potential density[kg/m^3]", axis_kwargs...)
-hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=:viridis) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=Reverse(:viridis)) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
 
 fig
