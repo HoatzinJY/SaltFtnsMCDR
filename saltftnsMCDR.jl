@@ -37,7 +37,7 @@ to do above, can use
 Oceananigans.AbstractOperations.Average, dimensions is three tuple,
 
 =#
-#TODO: organizize file, declare variables as global and make function file 
+#TODO: organizize file, declare variables as global and make function file, change init to profile 
 #constants and operations
 #TODO: figure out why it seems to be diverging, timestep too large, or, diverges over approx 50min
 #linked with above, dampening?, should besomething to do with viscosity? 
@@ -212,8 +212,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "3D model setup test run 2 with max rates"
-
+trial_name = "2D model setup test run 2 with manual max rates long"
 
 """SET UP MODEL COMPONENTS"""
 #grid spacing
@@ -243,8 +242,10 @@ locs = (Center(), Center(), Center());
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
 #set up domain grid 
-domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
-# domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded)) #2d option
+#3d option (4 cell) 
+#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
+#2d option  
+domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
 
 #MISCELLANEOUS
 clock = Clock{eltype(domain_grid)}(time=0);
@@ -288,12 +289,19 @@ S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gr
 boundary_conditions = (T = T_bcs, S = S_bcs)
 
 
+#MANUALLY SET MAX TIME STEP, FOR FORCING FUNCTIONS RELAXATION RATE 
+#this sets 
+# max_time_step = 0.25 * oscillation_frequency #this sets max time step to be 1/4 the oscillation frequency
+#this sets a max ∇T time step manaully.  set this to be larger than what you think the time step will be
+#provides the option to use this in determining relaxation rate instead of oscillation time scale --> allows bigger steps than 1/4 oscillation time scale 
+max_time_step = 0.3 #in seconds
+
 #FORCING FUNCTIONS
 #option for no forcing
 noforcing(x, z, t) = 0
 noforcing(x, y, z, t) = noforcing(x, z, t)
 #sets velocities inside wall to be 0
-max_damping_rate = oscillation_frequency #this will most often be 4x time step since time step max is 1/4 this TRACER_MIN -->  this shoudl be osicllation frequeny or shortest diffusive time scale TODO: write func getting longest and shortest time scales
+max_damping_rate = 3*max_time_step 
 u_damping_rate = 1/max_damping_rate #relaxes fields on 0.1 second time scale, should be very high
 w_damping_rate = 1/max_damping_rate #relaxes fields on 0.11 second time 
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
@@ -348,9 +356,9 @@ initial_oscillation_time_scale = sqrt((g/initial_pipe_density) * surrounding_den
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
-max_time_step = 0.25*initial_oscillation_time_scale
+#max_time_step = 0.25*initial_oscillation_time_scale # currently, max time step is set above 
 simulation_duration = 1day
-run_duration = 6hour
+run_duration = 1hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -368,7 +376,7 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 filename = joinpath("Trials",trial_name)
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(30), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
 run!(simulation; pickup=false)
