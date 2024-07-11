@@ -212,7 +212,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model setup test run 2 with max rates"
+trial_name = "3D model setup test run 2 with max rates"
 
 
 """SET UP MODEL COMPONENTS"""
@@ -243,8 +243,8 @@ locs = (Center(), Center(), Center());
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
 #set up domain grid 
-#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
-domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded)) #2d option
+domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
+# domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded)) #2d option
 
 #MISCELLANEOUS
 clock = Clock{eltype(domain_grid)}(time=0);
@@ -349,8 +349,8 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_time_scale, viscous_time_scale)
 max_time_step = 0.25*initial_oscillation_time_scale
-simulation_duration = 1minute
-run_duration = 30minute
+simulation_duration = 1day
+run_duration = 6hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
