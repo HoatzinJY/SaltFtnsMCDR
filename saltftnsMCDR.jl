@@ -10,7 +10,7 @@ using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
 
-#IF ADD IN MORE TRACERS, LOOK FOR LINES LABELED TRACER_MIN, need to edit 
+#IF ADD IN MORE TRACERS OR HAVE WALL SPECIFIC ONES, LOOK FOR LINES LABELED TRACER_MIN, need to edit, add function that takes min/max of things
 #if want to run lab scale, bounded, look for LAB_SET
 
 #NEXT RUN: NO WALLS TRIAL
@@ -48,7 +48,6 @@ const day = 86400;
 const hour = 3600;
 const minute = 60;
 const g = 9.806; #gravitational acceleration, in m^2/s
-scale = 1
 
 #TODO: think about which one to use, horiz = along isopycnals, vert = not along isopycnals, from DPO
 #enviroment parameters
@@ -83,6 +82,12 @@ function getMaxAndMin(numPoints, dataSeries)
     return (myMin, myMax)
 end
 
+"""DOMAIN SIZE"""
+domain_x = 15scale # width, in meters
+domain_z = 18scale #height, in meters
+x_center = domain_x / 2;
+scale = 1
+
 
 """PIPE AND PUMPING PARAMETERS"""
 #TODO: make these a struct 
@@ -92,7 +97,17 @@ pipe_top_depth = 3scale;
 pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
 #pumping parameters
 height_displaced = 2scale;
-initial_pipe_velocity = 0.001scale; #not yet used 
+initial_pipe_velocity = 0.001scale; #not yet used
+#pipe wall properties 
+mutable struct PipeWallData
+    wall_thermal_diffusivity :: Float64 
+    wall_thickness ::Float64
+end
+#current material: 90/10 copper nickel alloy https://super-metals.com/wp-content/uploads/2015/03/CuNI-90-10.pdf
+wall_material_ρ = 8900#density, in kg/m^3
+wall_material_cₚ = 376.812 #specific heat capacity under constant pressure, J/(kg * K)
+wall_material_k = 50.208#thermal conductivity (W/(mK))
+pipe_data = PipeWallData(wall_material_k/(wall_material_cₚ*wall_material_ρ), pipe_wall_thickness_intended)
 
 
 """MASKING FUNCTIONS"""
@@ -213,23 +228,19 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D small grid everything else set"
+trial_name = "2D with pipe wall thermal diffusivity set"
 
 """SET UP MODEL COMPONENTS"""
-#domain size
-domain_x = 15scale # width, in meters
-domain_z = 18scale #height, in meters
-x_center = domain_x / 2;
 #calculating max allowed spacing
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
 N =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/N
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
 #grid spacing
-#max_grid_spacing = 0.05 #manual option
+max_grid_spacing = 0.05 #manual option
 #max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_period) #0.0004m RACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
-memory = 64 #computer memory in GB
-max_grid_spacing = max(domain_x, domain_z)/sqrt(((memory/32) * 100000000)) #for 2D, max that computer can handle
+#memory = 64 #computer memory in GB
+#max_grid_spacing = max(domain_x, domain_z)/sqrt(((memory/32) * 100000000)) #for 2D, max that computer can handle
 # max_grid_spacing = max(domain_x, domain_z)/sqrt(((memory/32) * 100000000)/4) #for 2D, max that computer can handle
 #spacing declarations (grid size)
 x_grid_spacing = max_grid_spacing;
@@ -273,12 +284,25 @@ buoyancy = SeawaterBuoyancy(equation_of_state=eos)
 tracers = (:T, :S); #temperature, salinity
 
 """IMPORTANT: order of definition of kappas matter,must define in same order as tracer statement even though finding it later works""";
-closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
 
-# option for using eddy diffusivities
-# horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
-# vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
+thermal_data = (seawater = T_diffusivity, pipe = pipe_data) #working on the named tuple it should take 
+function tempDiffusivities(x, y, z, my_thermal_data :: NamedTuple)
+    if (isPipeWall(x, z))
+        return my_thermal_data.pipe.wall_thermal_diffusivity #edit to account for wall thickness
+    else 
+        return my_thermal_data.seawater.molecular
+    end
+end
+tempDiffusivities(x, z, thermal_data :: NamedTuple) = tempDiffusivities(x, 0, z, thermal_data :: NamedTuple)
+#might need a salt diffusivities function if the code wants one- run and see
+horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
+vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
+#option for no walls, just molecular diffusivities - TESTED
+#closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
+#option for eddy diffusivities 
 # closure = (horizontal_closure, vertical_closure)
+#option for walls - currently only thermal
+closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular), parameters = thermal_data)
 
 
 #BOUNDARY CONDITIONS
@@ -371,8 +395,8 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_period, viscous_time_scale, initial_advection_time_scale)
 max_time_step = initial_oscillation_period #this will be longest oscillation since parcel is densest 
-simulation_duration = 10hour
-run_duration =  3minute
+simulation_duration = 1hour
+run_duration =  1.5hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -390,9 +414,9 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 filename = joinpath("Trials",trial_name)
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
+#simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
-#simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(30), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(15), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
 run!(simulation; pickup=false)
