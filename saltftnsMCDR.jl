@@ -260,7 +260,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D bounded sponge layer for velocities"
+trial_name = "2D bounded sponge layer new max time step func test"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -268,9 +268,11 @@ surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_leng
 oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
-#grid spacing 
+#grid spacing, NEEDS TO BE LESS THAN 0.01189 for viscosity, but I dont think thats neccessary
 max_grid_spacing = 0.05 #manual option
-#max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_period) #0.0004m RACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
+#this sets max grid spacing based off diffusivity through pipe walls 
+#max_grid_spacing = 0.98*sqrt(pipe_data.wall_thermal_diffusivity*0.25*oscillation_period) #TRACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
+#max_grid_spacing = 0.98*sqrt(T_diffusivity.molecular*0.25*oscillation_period) #0.0004m RACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
 #memory = 64 #computer memory in GB
 #max_grid_spacing = max(domain_x, domain_z)/sqrt(((memory/32) * 100000000)) #for 2D, max that computer can handle
 # max_grid_spacing = max(domain_x, domain_z)/sqrt(((memory/32) * 100000000)/4) #for 2D, max that computer can handle
@@ -312,6 +314,24 @@ eos = TEOS10EquationOfState()
 buoyancy = SeawaterBuoyancy(equation_of_state=eos)
 #buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
 
+
+# #SECTION SETS NEW DIFFUSION VALUES BASED ON A DESIRED GRID SIZE, FOR TESTING PURPOSES, DO NOT USE IF EDDY DIFFUSIVITY IN USE
+# target_spacing = max_grid_spacing
+# minimum_diffusivity = (max_grid_spacing^2)/(0.25*oscillation_period) #TODO: check what this is 
+# minimum_diffusivity = 1.01*minimum_diffusivity #safety factor 
+# #now scale all according to minimum diffusivity 
+# #currently setting temperature as standard, and only editing tracers not viscosity, since only temperature goes through tube
+# #could also set the smallest diffusivity as the standard, in the case, salinity, may need to edit TRACER_MIN
+# #TODO: check that these reassign propertly
+# reference_diffusivity = T_diffusivity.molecular
+# function rescaleDiffusivities(diff, scaleWith, scaleTo)
+#     return (diff/scaleWith)*scaleTo
+# end
+# T_diffusivity.molecular = rescaleDiffusivities(T_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
+# S_diffusivity.molecular = rescaleDiffusivities(S_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
+# pipe_data.wall_thermal_diffusivity = rescaleDiffusivities(pipe_data.wall_thermal_diffusivity, reference_diffusivity, minimum_diffusivity)
+
+
 #TRACERS & DIFFUSION CLOSURES
 tracers = (:T, :S); #temperature, salinity
 
@@ -341,8 +361,6 @@ vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.
 #option for eddy diffusivities 
 # closure = (horizontal_closure, vertical_closure)
 #option for walls - currently only thermal
-#TODO: fix call and figure out if parameters are automatically passed. 
-#TODO: figure out why the call with parameters does not work, even though its put in he github
 closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular))
 
 #BOUNDARY CONDITIONS
@@ -415,9 +433,9 @@ compute!(ρ_initial)
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 initial_travel_velocity = 0.01 # a number just to set an initial time step, determined from initial runs starting around 1ms
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
-#diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
+diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T #TRACER_MIN, set to tracer with biggest kappa, to use when horizontal and vertical diffusivities are used
-minimum_diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
+#minimum_diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 # surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
 # initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
@@ -429,7 +447,7 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
 #max time step set during model creation
 simulation_duration = 30minute
-run_duration = 1hour
+run_duration = 10minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
