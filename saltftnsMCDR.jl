@@ -141,6 +141,7 @@ pipe_data = PipeWallData(wall_material_k/(wall_material_cₚ*wall_material_ρ), 
 
 
 """MASKING FUNCTIONS"""
+#TODO: these all use a pipe_wall_thickness --> should pass that in instead, since that is calculated during grid making
 function isInsidePipe(x, z)
     if (x > (x_center - pipe_radius) && x < (x_center + pipe_radius) && z < -pipe_top_depth && z > -(pipe_top_depth + pipe_length))
         return true
@@ -258,7 +259,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D periodic edited wall forcing"
+trial_name = "2D "
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -315,15 +316,17 @@ tracers = (:T, :S); #temperature, salinity
 
 """IMPORTANT: order of definition of kappas matter,must define in same order as tracer statement even though finding it later works""";
 
-diffusivity_data = (seawater = seawater_diffusion_data, pipe = pipe_data) #working on the named tuple it should take 
-function tempDiffusivities(x, y, z)
+diffusivity_data = (seawater = seawater_diffusion_data, pipe = pipe_data)
+#TODO: this function uses nonlocal data  #working on the named tuple it should take 
+function tempDiffusivities(x, y, z, parameters)
     if (isPipeWall(x, z))
-        return my_diffusivity_data.pipe.wall_thermal_diffusivity #edit to account for wall thickness
+        return parameters[:pipe].wall_thermal_diffusivity #edit to account for wall thickness
     else 
-        return my_diffusivity_data.seawater.T.molecular
+        return parameters[:seawater].T.molecular
     end
 end
-tempDiffusivities(x, z) = tempDiffusivities(x, 0, z)
+tempDiffusivities(x, z) = tempDiffusivities(x, 0, z, diffusivity_data)
+tempDiffusivities(x, y, z) = tempDiffusivities(x, y, z, diffusivity_data)
 # function saltDiffusivities(x, y, z, my_diffusivity_data :: NamedTuple)
 #     return my_diffusivity_data.seawater.S.molecular
 # end
@@ -332,12 +335,13 @@ tempDiffusivities(x, z) = tempDiffusivities(x, 0, z)
 horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
 vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 #option for no walls, just molecular diffusivities - TESTED
-closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
+#closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
 #option for eddy diffusivities 
 # closure = (horizontal_closure, vertical_closure)
 #option for walls - currently only thermal
 #TODO: fix call and figure out if parameters are automatically passed. 
-#closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular), parameters = thermal_data)
+#TODO: figure out why the call with parameters does not work, even though its put in he github
+closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular))
 
 
 #BOUNDARY CONDITIONS
