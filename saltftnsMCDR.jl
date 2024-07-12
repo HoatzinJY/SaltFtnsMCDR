@@ -38,6 +38,7 @@ to do above, can use
 Oceananigans.AbstractOperations.Average, dimensions is three tuple,
 
 =#
+#TODO: problem: wall
 #TODO: organizize file, declare variables as global and make function file, change init to profile 
 #constants and operations
 #TODO: figure out why it seems to be diverging, timestep too large, or, diverges over approx 50min
@@ -49,12 +50,14 @@ const hour = 3600;
 const minute = 60;
 const g = 9.806; #gravitational acceleration, in m^2/s
 
-#TODO: think about which one to use, horiz = along isopycnals, vert = not along isopycnals, from DPO
-#enviroment parameters
 mutable struct DiffusionParameter
     molecular::Float64
     isopycnal::Float64 #horizontal
     diapycnal::Float64 #vertical
+end
+mutable struct SeawaterDiffusivityData
+    T :: DiffusionParameter
+    S :: DiffusionParameter
 end
 #numbers from DPO, at 20C, low estimate for isopycnal
 #TODO: maybe make values store a range for temp, and then search in range after interpolation
@@ -63,6 +66,7 @@ eddy_vertical_diffusivity = 1e-5
 viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
 T_diffusivity = DiffusionParameter(1.46e-7, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
+seawater_diffusion_data = SeawaterDiffusivityData(T_diffusivity, S_diffusivity)
 
 
 geopotential_height = 0; # sea surface height for potential density calculations
@@ -81,12 +85,38 @@ function getMaxAndMin(numPoints, dataSeries)
     end
     return (myMin, myMax)
 end
+function getIndexFromTime(time, timeSeries)
+    numTotFrames = length(timeSeries)
+    if (time == -1)
+        return numTotFrames
+    end
+    for i in 1:numTotFrames
+        if (timeSeries[i] > time)
+            return i
+        end
+    end
+    @info "Run duration too short, animating until end"
+    return numTotFrames
+end 
+function getMaskedAverage(mask::Function, field)
+    fieldNodes = nodes(field.grid, locs, reshape = true)
+    sum = 0;
+    count = 0;
+    for i in eachindex(fieldNodes[1])
+        for j in eachindex(fieldNodes[3])
+            sum += mask(fieldNodes[1][i], fieldNodes[3][j]) * field.data[i, 1, j]
+            count += 1*mask(fieldNodes[1][i], fieldNodes[3][j])
+        end
+    end
+    return sum/count
+end
 
 """DOMAIN SIZE"""
+scale = 1
 domain_x = 15scale # width, in meters
 domain_z = 18scale #height, in meters
 x_center = domain_x / 2;
-scale = 1
+
 
 
 """PIPE AND PUMPING PARAMETERS"""
@@ -228,7 +258,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D with pipe wall thermal diffusivity set"
+trial_name = "2D periodic edited wall forcing"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -285,24 +315,29 @@ tracers = (:T, :S); #temperature, salinity
 
 """IMPORTANT: order of definition of kappas matter,must define in same order as tracer statement even though finding it later works""";
 
-thermal_data = (seawater = T_diffusivity, pipe = pipe_data) #working on the named tuple it should take 
-function tempDiffusivities(x, y, z, my_thermal_data :: NamedTuple)
+diffusivity_data = (seawater = seawater_diffusion_data, pipe = pipe_data) #working on the named tuple it should take 
+function tempDiffusivities(x, y, z)
     if (isPipeWall(x, z))
-        return my_thermal_data.pipe.wall_thermal_diffusivity #edit to account for wall thickness
+        return my_diffusivity_data.pipe.wall_thermal_diffusivity #edit to account for wall thickness
     else 
-        return my_thermal_data.seawater.molecular
+        return my_diffusivity_data.seawater.T.molecular
     end
 end
-tempDiffusivities(x, z, thermal_data :: NamedTuple) = tempDiffusivities(x, 0, z, thermal_data :: NamedTuple)
+tempDiffusivities(x, z) = tempDiffusivities(x, 0, z)
+# function saltDiffusivities(x, y, z, my_diffusivity_data :: NamedTuple)
+#     return my_diffusivity_data.seawater.S.molecular
+# end
+# saltDiffusivities(x, z, my_diffusivity_data :: NamedTuple) = saltDiffusivities(x, 0, z, my_diffusivity_data :: NamedTuple)
 #might need a salt diffusivities function if the code wants one- run and see
 horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
 vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 #option for no walls, just molecular diffusivities - TESTED
-#closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
+closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
 #option for eddy diffusivities 
 # closure = (horizontal_closure, vertical_closure)
 #option for walls - currently only thermal
-closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular), parameters = thermal_data)
+#TODO: fix call and figure out if parameters are automatically passed. 
+#closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular), parameters = thermal_data)
 
 
 #BOUNDARY CONDITIONS
@@ -336,7 +371,7 @@ max_time_step = 0.25 * oscillation_period #this sets max time step to be 1/4 the
 noforcing(x, z, t) = 0
 noforcing(x, y, z, t) = noforcing(x, z, t)
 #sets velocities inside wall to be 0
-max_damping_rate = 3*max_time_step #this is the max frequency, eg. can only choose damping timescales bigger  
+max_damping_rate = 2*max_time_step #this is the max frequency, eg. can only choose damping timescales bigger  
 u_damping_rate = 1/max_damping_rate #relaxes fields on 0.1 second time scale, should be very high
 w_damping_rate = 1/max_damping_rate #relaxes fields on 0.11 second time 
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
@@ -369,19 +404,6 @@ compute!(ρ_initial)
 @info "initial conditions set"
 
 #setting time steps 
-function getMaskedAverage(mask::Function, field)
-    fieldNodes = nodes(field.grid, locs, reshape = true)
-    sum = 0;
-    count = 0;
-    for i in eachindex(fieldNodes[1])
-        for j in eachindex(fieldNodes[3])
-            sum += mask(fieldNodes[1][i], fieldNodes[3][j]) * field.data[i, 1, j]
-            count += 1*mask(fieldNodes[1][i], fieldNodes[3][j])
-        end
-    end
-    return sum/count
-end
-
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 initial_travel_velocity = 0.01 # a number just to set an initial time step, determined from initial runs starting around 1ms
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
@@ -393,10 +415,11 @@ initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_den
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 
+#for intial time step to be ok, next step need to increase, currently its 500ms, seems to increase)
 initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_period, viscous_time_scale, initial_advection_time_scale)
-max_time_step = initial_oscillation_period #this will be longest oscillation since parcel is densest 
-simulation_duration = 1hour
-run_duration =  1.5hour
+max_time_step = 0.25*initial_oscillation_period #this will be longest oscillation since parcel is densest, maybe shoudl set to above one for consistency 
+simulation_duration = 30minute
+run_duration = 1hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -426,7 +449,6 @@ run!(simulation; pickup=false)
 
 
 #visualize simulation
-
 output_filename = filename * ".jld2"
 u_t = FieldTimeSeries(output_filename, "u")
 w_t = FieldTimeSeries(output_filename, "w")
@@ -448,7 +470,11 @@ Sₙ = @lift interior(S_t[$n], :, 1, :)
 ρₙ = @lift interior(ρ_t[$n], :, 1, :)
 @info "finished extracting data as arrays"
 
-num_Data_Points = length(times)
+#how much of data set to plot 
+plot_until_time = -1 #enter -1 to plot whole thing
+lastFrame = getIndexFromTime(plot_until_time, times)
+num_Data_Points = lastFrame
+
 #very inefficient way of getting max/min, need to update
 T_range = getMaxAndMin(num_Data_Points, T_t)
 S_range = getMaxAndMin(num_Data_Points, S_t)
@@ -461,21 +487,6 @@ w_range = getMaxAndMin(num_Data_Points, w_t)
 
 
 #making animations 
-function getIndexFromTime(time, timeSeries)
-    numTotFrames = length(timeSeries)
-    if (time == -1)
-        return numTotFrames
-    end
-    for i in 1:numTotFrames
-        if (timeSeries[i] > time)
-            return i
-        end
-    end
-    @info "Run duration too short, animating until end"
-    return numTotFrames
-end 
-plot_until_time = -1 #enter -1 to plot whole thing
-lastFrame = getIndexFromTime(plot_until_time, times)
 
 #properties
 fig = Figure(size=(600, 900))
