@@ -11,7 +11,7 @@ using GibbsSeaWater
 using NetCDF
 
 #IF ADD IN MORE TRACERS OR HAVE WALL SPECIFIC ONES, LOOK FOR LINES LABELED TRACER_MIN, need to edit, add function that takes min/max of things
-#if want to run lab scale, bounded, look for LAB_SET
+#to swap between bounded and periodic, look for LAB_SET
 
 #NEXT RUN: NO WALLS TRIAL
 # EVEN WITH CORRECT PERTURBATION IT DIVERGES
@@ -48,7 +48,8 @@ Oceananigans.AbstractOperations.Average, dimensions is three tuple,
 const day = 86400;
 const hour = 3600;
 const minute = 60;
-const g = 9.806; #gravitational acceleration, in m^2/s
+const g = 9.806; 
+const CFL = 0.2;#gravitational acceleration, in m^2/s
 
 mutable struct DiffusionParameter
     molecular::Float64
@@ -259,15 +260,15 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D "
+trial_name = "2D bounded sponge layer for velocities"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
-N =  sqrt((g/1000) * surrounding_density_gradient)
-oscillation_period = 2π/N
+oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
+oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
-#grid spacing
+#grid spacing 
 max_grid_spacing = 0.05 #manual option
 #max_grid_spacing = sqrt(S_diffusivity.molecular*0.25*oscillation_period) #0.0004m RACER_MIN MAY NEED TO EDIT DEPENDING ON TRACERS: sets max grid spacing to be distance that slowest diffusing tracer travels in 1/4 the oscillation timescale
 #memory = 64 #computer memory in GB
@@ -294,11 +295,11 @@ locs = (Center(), Center(), Center());
 #3d option (4 cell) 
 #domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
 #2d option  
-# domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
+domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
 #PERIODIC OPTION
 #domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Periodic, Periodic, Bounded))
 #2d option  
-domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
+#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
 
 #MISCELLANEOUS
 clock = Clock{eltype(domain_grid)}(time=0);
@@ -318,15 +319,16 @@ tracers = (:T, :S); #temperature, salinity
 
 diffusivity_data = (seawater = seawater_diffusion_data, pipe = pipe_data)
 #TODO: this function uses nonlocal data  #working on the named tuple it should take 
-function tempDiffusivities(x, y, z, parameters)
-    if (isPipeWall(x, z))
+function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
+    if (isPipeWall(x, z) || wall_indicator == "WALL")
         return parameters[:pipe].wall_thermal_diffusivity #edit to account for wall thickness
     else 
         return parameters[:seawater].T.molecular
     end
 end
-tempDiffusivities(x, z) = tempDiffusivities(x, 0, z, diffusivity_data)
-tempDiffusivities(x, y, z) = tempDiffusivities(x, y, z, diffusivity_data)
+tempDiffusivities(x, z) = tempDiffusivities(x, 0, z, diffusivity_data, "")
+tempDiffusivities(x, y, z) = tempDiffusivities(x, y, z, diffusivity_data, "")
+tempDiffusivities(x, y, z, parameters::NamedTuple) = tempDiffusivities(x, y, z, parameters, "")
 # function saltDiffusivities(x, y, z, my_diffusivity_data :: NamedTuple)
 #     return my_diffusivity_data.seawater.S.molecular
 # end
@@ -343,7 +345,6 @@ vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.
 #TODO: figure out why the call with parameters does not work, even though its put in he github
 closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular))
 
-
 #BOUNDARY CONDITIONS
 #initial gradient dζ/dz, assuming z decreases with depth
 #TODO: use this instead of relaxation to imitate infinite reservoir
@@ -353,19 +354,21 @@ initial_S_top_gradient = (S_init(0, 0 - z_grid_spacing) - S_init(0,0))/z_grid_sp
 initial_S_bottom_gradient = (S_init(0, domain_z) - S_init(0, domain_z + z_grid_spacing))/z_grid_spacing
 
 #these two only incoporate constant gradient
-T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
-S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
+# T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
+# S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
 
 #below incorporates side boundaries as a constant gradient, CANT DO WITH PERIODIC (LAB_SET)
-#TODO: figure out if use this or sponge layer
-# T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
-# S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(S_init_bc), west = ValueBoundaryCondition(S_init_bc))
+T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
+S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(S_init_bc), west = ValueBoundaryCondition(S_init_bc))
 boundary_conditions = (T = T_bcs, S = S_bcs)
 
 
 #MANUALLY SET MAX TIME STEP, FOR FORCING FUNCTIONS RELAXATION RATE 
-#this sets 
-max_time_step = 0.25 * oscillation_period #this sets max time step to be 1/4 the oscillation frequency
+#this sets it automatically based off predicted minimum delta T, which is predicte via height displacemnt and buoyancy frequency
+#TODO: is there a way to making foring timescale a function of model, such that it takes in model's timestep and sets it to be just over that --> look into source code 
+v_max_predicted = oscillation_angular_frequency * height_displaced
+min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
+max_time_step = 2 * min_time_step_predicted#sets max time step to be 2x the predicted minimum time step
 #this sets a max ∇T time step manaully.  set this to be larger than what you think the time step will be
 #provides the option to use this in determining relaxation rate instead of oscillation time scale --> allows bigger steps than 1/4 oscillation time scale 
 # max_time_step = 0.3 #in seconds
@@ -375,13 +378,14 @@ max_time_step = 0.25 * oscillation_period #this sets max time step to be 1/4 the
 noforcing(x, z, t) = 0
 noforcing(x, y, z, t) = noforcing(x, z, t)
 #sets velocities inside wall to be 0
-max_damping_rate = 2*max_time_step #this is the max frequency, eg. can only choose damping timescales bigger  
+max_damping_rate = 1.1*max_time_step #this is the max frequency, eg. can only choose damping timescales bigger  
 u_damping_rate = 1/max_damping_rate #relaxes fields on 0.1 second time scale, should be very high
 w_damping_rate = 1/max_damping_rate #relaxes fields on 0.11 second time 
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
 #sets sponge layer for parameters on all water borders
 border_damping_rate = 1/max_damping_rate
+uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
 #no forcing
@@ -389,7 +393,7 @@ S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = T_border, S=S_border)
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 
 
 #BIOGEOCHEMISTRY
@@ -411,23 +415,25 @@ compute!(ρ_initial)
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 initial_travel_velocity = 0.01 # a number just to set an initial time step, determined from initial runs starting around 1ms
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
-# diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T #to use when horizontal and vertical diffusivities are used
-diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
-surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
-initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
-initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
+#diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
+# diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T #TRACER_MIN, set to tracer with biggest kappa, to use when horizontal and vertical diffusivities are used
+minimum_diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
+# surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
+# initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
+# initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
+
 
 
 #for intial time step to be ok, next step need to increase, currently its 500ms, seems to increase)
-initial_time_step = 0.1 * min(diffusion_time_scale, initial_oscillation_period, viscous_time_scale, initial_advection_time_scale)
-max_time_step = 0.25*initial_oscillation_period #this will be longest oscillation since parcel is densest, maybe shoudl set to above one for consistency 
+initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
+#max time step set during model creation
 simulation_duration = 30minute
 run_duration = 1hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2, max_Δt = max_time_step) #TODO: set max delta t?
+timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = max_time_step) #TODO: set max delta t?
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
