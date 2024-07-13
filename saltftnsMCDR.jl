@@ -112,24 +112,40 @@ function getMaskedAverage(mask::Function, field)
     return sum/count
 end
 
-"""DOMAIN SIZE"""
+
+"""REAL SIZE ISH TEST"""
 scale = 1
-domain_x = 15scale # width, in meters
-domain_z = 18scale #height, in meters
+domain_x = 40scale # width, in meters
+domain_z = 300scale #height, in meters
 x_center = domain_x / 2;
-
-
-
-"""PIPE AND PUMPING PARAMETERS"""
-#TODO: make these a struct 
-pipe_radius = 0.5scale;
-pipe_length = 10scale;
-pipe_top_depth = 3scale;
+pipe_radius = 1scale;
+pipe_length = 200scale;
+pipe_top_depth = 50scale;
 pipe_bottom_depth = pipe_top_depth + pipe_length
-pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
+pipe_wall_thickness_intended = 0.02scale; #will be rounded up to nearest number of grid cells during grid setup
 #pumping parameters
-height_displaced = 2scale;
-initial_pipe_velocity = 0.001scale; #not yet used
+height_displaced = 40scale;
+initial_pipe_velocity = 0.001scale;
+
+
+# """DOMAIN SIZE"""
+# scale = 1
+# domain_x = 15scale # width, in meters
+# domain_z = 18scale #height, in meters
+# x_center = domain_x / 2;
+
+
+
+# """PIPE AND PUMPING PARAMETERS"""
+# #TODO: make these a struct 
+# pipe_radius = 0.5scale;
+# pipe_length = 10scale;
+# pipe_top_depth = 3scale;
+# pipe_bottom_depth = pipe_top_depth + pipe_length
+# pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
+# #pumping parameters
+# height_displaced = 2scale;
+# initial_pipe_velocity = 0.001scale; #not yet used
 #pipe wall properties 
 mutable struct PipeWallData
     wall_thermal_diffusivity :: Float64 
@@ -291,7 +307,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D fixed salinity entire time scaled diffusivities"
+trial_name = "2D fixed salinity entire time normal diffusivities real size"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -347,20 +363,20 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 #buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
 
 
-#SECTION SETS NEW DIFFUSION VALUES BASED ON A DESIRED GRID SIZE, FOR TESTING PURPOSES, DO NOT USE IF EDDY DIFFUSIVITY IN USE
-target_spacing = max_grid_spacing
-minimum_diffusivity = (max_grid_spacing^2)/(0.25*oscillation_period) #TODO: check what this is 
-minimum_diffusivity = 1.01*minimum_diffusivity #safety factor 
-#now scale all according to minimum diffusivity 
-#currently setting temperature as standard, and only editing tracers not viscosity, since only temperature goes through tube
-#could also set the smallest diffusivity as the standard, in the case, salinity, may need to edit TRACER_MIN
-reference_diffusivity = T_diffusivity.molecular
-function rescaleDiffusivities(diff, scaleWith, scaleTo)
-    return (diff/scaleWith)*scaleTo
-end
-T_diffusivity.molecular = rescaleDiffusivities(T_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
-S_diffusivity.molecular = rescaleDiffusivities(S_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
-pipe_data.wall_thermal_diffusivity = rescaleDiffusivities(pipe_data.wall_thermal_diffusivity, reference_diffusivity, minimum_diffusivity)
+# #SECTION SETS NEW DIFFUSION VALUES BASED ON A DESIRED GRID SIZE, FOR TESTING PURPOSES, DO NOT USE IF EDDY DIFFUSIVITY IN USE
+# target_spacing = max_grid_spacing
+# minimum_diffusivity = (max_grid_spacing^2)/(0.25*oscillation_period) #TODO: check what this is 
+# minimum_diffusivity = 1.01*minimum_diffusivity #safety factor 
+# #now scale all according to minimum diffusivity 
+# #currently setting temperature as standard, and only editing tracers not viscosity, since only temperature goes through tube
+# #could also set the smallest diffusivity as the standard, in the case, salinity, may need to edit TRACER_MIN
+# reference_diffusivity = T_diffusivity.molecular
+# function rescaleDiffusivities(diff, scaleWith, scaleTo)
+#     return (diff/scaleWith)*scaleTo
+# end
+# T_diffusivity.molecular = rescaleDiffusivities(T_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
+# S_diffusivity.molecular = rescaleDiffusivities(S_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
+# pipe_data.wall_thermal_diffusivity = rescaleDiffusivities(pipe_data.wall_thermal_diffusivity, reference_diffusivity, minimum_diffusivity)
 
 
 #TRACERS & DIFFUSION CLOSURES
