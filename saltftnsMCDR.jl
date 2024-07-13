@@ -64,7 +64,7 @@ end
 #TODO: maybe make values store a range for temp, and then search in range after interpolation
 eddy_horizontal_diffusivity = 5e2
 eddy_vertical_diffusivity = 1e-5
-viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
+my_viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
 T_diffusivity = DiffusionParameter(1.46e-7, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 seawater_diffusion_data = SeawaterDiffusivityData(T_diffusivity, S_diffusivity)
@@ -231,25 +231,8 @@ delta_z = 200;
 # end
 #TODO: test these initial conditions
 #assuming having equalized temperature, steady state
-# function T_init(x, y, z)
-#     return T_top - ((T_bot - T_top) / delta_z)z
-# end
-# function S_init(x, y, z)
-#     if (isInsidePipe(x, z))
-#         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
-#     else
-#         return S_top - ((S_bot - S_top) / delta_z)z
-#     end
-# end
-#assuming not having equalized temperatures, but salinity equal to bottom
 function T_init(x, y, z)
-    #inside pipe, currently slightly lagging by 0.2 m
-    if (isInsidePipe(x, z))
-        return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
-        #outside pipe
-    else
-        return T_top - ((T_bot - T_top) / delta_z)z
-    end
+    return T_top - ((T_bot - T_top) / delta_z)z
 end
 function S_init(x, y, z)
     if (isInsidePipe(x, z))
@@ -258,6 +241,23 @@ function S_init(x, y, z)
         return S_top - ((S_bot - S_top) / delta_z)z
     end
 end
+#assuming not having equalized temperatures, but salinity equal to bottom
+# function T_init(x, y, z)
+#     #inside pipe, currently slightly lagging by 0.2 m
+#     if (isInsidePipe(x, z))
+#         return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
+#         #outside pipe
+#     else
+#         return T_top - ((T_bot - T_top) / delta_z)z
+#     end
+# end
+# function S_init(x, y, z)
+#     if (isInsidePipe(x, z))
+#         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
+#     else
+#         return S_top - ((S_bot - S_top) / delta_z)z
+#     end
+# end
 T_init(x, z) = T_init(x, 0, z)
 T_init_bc(y, z, t) = T_init(0, 0, z)
 T_init_bc(z, t) = T_init(0, z)
@@ -291,7 +291,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D with diffusion scaling and new max time step test"
+trial_name = "2D fixed salinity entire time scaled diffusivities"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -401,14 +401,14 @@ tempDiffusivities(x, y, z, parameters::NamedTuple) = tempDiffusivities(x, y, z, 
 # end
 # saltDiffusivities(x, z, my_diffusivity_data :: NamedTuple) = saltDiffusivities(x, 0, z, my_diffusivity_data :: NamedTuple)
 #might need a salt diffusivities function if the code wants one- run and see
-horizontal_closure = HorizontalScalarDiffusivity(ν=viscosity.molecular + viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
-vertical_closure = VerticalScalarDiffusivity(ν=viscosity.molecular + viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
+horizontal_closure = HorizontalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
+vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 #option for no walls, just molecular diffusivities - TESTED
-closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
+closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
 #option for eddy diffusivities 
 # closure = (horizontal_closure, vertical_closure)
 #option for walls - currently only thermal
-# closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular))
+# closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular))
 
 #BOUNDARY CONDITIONS
 #initial gradient dζ/dz, assuming z decreases with depth
@@ -461,9 +461,9 @@ S_pipe = Relaxation(rate = pipe_damping_rate, mask = pipeMask, target = S_init(0
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and internal pipe relaxation
-#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
 
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
