@@ -241,11 +241,11 @@ delta_z = 200;
 #         return S_top - ((S_bot - S_top) / delta_z)z
 #     end
 # end
-#assuming not having equalized temperatures, slightly lagging (can change to height displaced if want), but salinity is equal to bottom
+#assuming not having equalized temperatures, but salinity equal to bottom
 function T_init(x, y, z)
     #inside pipe, currently slightly lagging by 0.2 m
     if (isInsidePipe(x, z))
-        return T_top - ((T_bot - T_top) / delta_z) * (z - 0.2)
+        return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
         #outside pipe
     else
         return T_top - ((T_bot - T_top) / delta_z)z
@@ -453,13 +453,17 @@ border_damping_rate = 1/max_damping_rate
 uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
+#sets forcing for salinity inside pipe
+pipe_damping_rate = 1/max_damping_rate
+S_pipe = Relaxation(rate = pipe_damping_rate, mask = pipeMask, target = S_init(0, 0, -pipe_bottom_depth))
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
 forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
-
+#pipe wall velocities and property sponge layer, and internal pipe relaxation
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
 
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
