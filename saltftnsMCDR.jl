@@ -125,6 +125,7 @@ x_center = domain_x / 2;
 pipe_radius = 0.5scale;
 pipe_length = 10scale;
 pipe_top_depth = 3scale;
+pipe_bottom_depth = pipe_top_depth + pipe_length
 pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
 #pumping parameters
 height_displaced = 2scale;
@@ -211,13 +212,50 @@ T_bot = 11.86;
 S_bot = 34.18;
 S_top = 35.22;
 delta_z = 200; 
+#perturbation
+# function T_init(x, y, z)
+#     #inside pipe
+#     if (isInsidePipe(x, z))
+#         return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
+#         #outside pipe
+#     else
+#         return T_top - ((T_bot - T_top) / delta_z)z
+#     end
+# end
+# function S_init(x, y, z)
+#     if (isInsidePipe(x, z))
+#         return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
+#     else
+#         return S_top - ((S_bot - S_top) / delta_z)z
+#     end
+# end
+#TODO: test these initial conditions
+#assuming having equalized temperature, steady state
+# function T_init(x, y, z)
+#     return T_top - ((T_bot - T_top) / delta_z)z
+# end
+# function S_init(x, y, z)
+#     if (isInsidePipe(x, z))
+#         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
+#     else
+#         return S_top - ((S_bot - S_top) / delta_z)z
+#     end
+# end
+#assuming not having equalized temperatures, slightly lagging (can change to height displaced if want), but salinity is equal to bottom
 function T_init(x, y, z)
-    #inside pipe
+    #inside pipe, currently slightly lagging by 0.2 m
     if (isInsidePipe(x, z))
-        return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
+        return T_top - ((T_bot - T_top) / delta_z) * (z - 0.2)
         #outside pipe
     else
         return T_top - ((T_bot - T_top) / delta_z)z
+    end
+end
+function S_init(x, y, z)
+    if (isInsidePipe(x, z))
+        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
+    else
+        return S_top - ((S_bot - S_top) / delta_z)z
     end
 end
 T_init(x, z) = T_init(x, 0, z)
@@ -225,13 +263,6 @@ T_init_bc(y, z, t) = T_init(0, 0, z)
 T_init_bc(z, t) = T_init(0, z)
 T_init_target(x, z, t) = T_init(x, 0, z)
 T_init_target(x, y, z, t) = T_init(x, 0, z)
-function S_init(x, y, z)
-    if (isInsidePipe(x, z))
-        return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
-    else
-        return S_top - ((S_bot - S_top) / delta_z)z
-    end
-end
 S_init(x, z) = S_init(x, 0, z)
 S_init_bc(y, z, t) = S_init(0, 0, z)
 S_init_bc(z, t) = S_init(0, z)
