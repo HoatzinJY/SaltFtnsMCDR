@@ -513,8 +513,8 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 #for intial time step to be ok, next step need to increase, currently its 500ms, seems to increase)
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
 #max time step set during model creation
-simulation_duration = 5minute
-run_duration = 5minute
+simulation_duration = 5day
+run_duration = 48hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -534,7 +534,7 @@ S = model.tracers.S;
 filename = joinpath("Trials",trial_name)
 #simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(15), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1minute), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
 run!(simulation; pickup=false)
