@@ -144,8 +144,33 @@ domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_
 advection = CenteredSecondOrder();
 tracers = (:T, :S); 
 timestepper = :RungeKutta3; 
-closure = ScalarDiffusivity(ν=0, κ=(T=1.46e-7, S=1.3E-9))
+
+
+function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
+    if (z < 9 || wall_indicator == "WALL")
+        return 1 #edit to account for wall thickness
+    else 
+        return 0
+    end
+end
+#to test, with pipe wall, this sets top half pipe wall with big diffusivity, rest 2 degrees of magnitude less
+# function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
+#     if ((isPipeWall(x, z) && z < 9) || wall_indicator == "WALL")
+#         return 1
+#     else 
+#         return 0.01
+#     end
+# end
+tempDiffusivities(x, z) = tempDiffusivities(x, 0, z, diffusivity_data, "")
+tempDiffusivities(x, y, z) = tempDiffusivities(x, y, z, diffusivity_data, "")
+tempDiffusivities(x, y, z, parameters::NamedTuple) = tempDiffusivities(x, y, z, parameters, "")
+#option for walls - currently only thermal
+closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=1.3E-9))
+
+#closure = ScalarDiffusivity(ν=0, κ=(T=1.46e-7, S=1.3E-9))
 #closure = ScalarDiffusivity(ν=0, κ=(S=0.5, T=1.0))
+
+
 buoyancy = nothing
 # u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
 # w_damping_rate = 1/1 #relaxes fields on 1 second time scale
@@ -170,7 +195,7 @@ diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 initial_time_step = 0.1*diffusion_time_scale
 #max_time_step = myCFL*diffusion_time_scale
 simulation_duration = 15day
-run_duration = 5minute;
+run_duration = 2minute;
 
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
 timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2) #TODO: set max delta t?
