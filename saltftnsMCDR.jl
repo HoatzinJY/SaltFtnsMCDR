@@ -240,12 +240,12 @@ S_bot = 34.18;
 S_top = 35.22;
 delta_z = 200; 
 #no perturbation
-function T_init(x, y, z)
-        return T_top - ((T_bot - T_top) / delta_z)z
-end
-function S_init(x, y, z)
-        return S_top - ((S_bot - S_top) / delta_z)z
-end
+# function T_init(x, y, z)
+#         return T_top - ((T_bot - T_top) / delta_z)z
+# end
+# function S_init(x, y, z)
+#         return S_top - ((S_bot - S_top) / delta_z)z
+# end
 #perturbation
 # function T_init(x, y, z)
 #     #inside pipe
@@ -265,16 +265,16 @@ end
 # end
 #TODO: test these initial conditions
 #assuming having equalized temperature, steady state
-# function T_init(x, y, z)
-#     return T_top - ((T_bot - T_top) / delta_z)z
-# end
-# function S_init(x, y, z)
-#     if (isInsidePipe(x, z))
-#         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
-#     else
-#         return S_top - ((S_bot - S_top) / delta_z)z
-#     end
-# end
+function T_init(x, y, z)
+    return T_top - ((T_bot - T_top) / delta_z)z
+end
+function S_init(x, y, z)
+    if (isInsidePipe(x, z))
+        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
+    else
+        return S_top - ((S_bot - S_top) / delta_z)z
+    end
+end
 #assuming not having equalized temperatures, but salinity equal to bottom
 # function T_init(x, y, z)
 #     #inside pipe, currently slightly lagging by 0.2 m
@@ -304,7 +304,7 @@ S_init_target(x, z, t) = S_init(x, 0, z)
 S_init_target(x, y, z, t) = S_init(x, 0, z)
 function w_init(x, y, z)
     if (isInsidePipe(x, z))
-        return initial_pipe_velocity;
+        #return initial_pipe_velocity;
         return 0
     else
         return 0
@@ -511,12 +511,12 @@ S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target
 pipe_damping_rate = 1/max_damping_rate
 S_pipe = Relaxation(rate = pipe_damping_rate, mask = pipeMask, target = S_init(0, 0, -pipe_bottom_depth))
 #sets initial forcing for velocity while pump driven 
-pump_info = (Δz = height_displaced, wₚ = initial_pipe_velocity, f_rate = max_damping_rate)
+pump_info = (Δz = height_displaced, wₚ = initial_pipe_velocity, f_rate = 1/max_damping_rate)
 w_pump_forcing = Forcing(w_pump, parameters = pump_info, field_dependencies = :w)
 #sets tracer in walls to be forced to that immediately inside pipe
 tracer_field_nodes = nodes(domain_grid,(Center(), Center(), Center()); reshape = true)
 S_wall_forcing_func(i, j, k, grid, clock, model_fields, rate) = inpenetrable_wall_forcer(x_center, tracer_field_nodes, i, j, k, model_fields.S, rate)
-S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters = max_damping_rate)
+S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters = 1/max_damping_rate)
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 # pipe wall velocities only 
@@ -553,7 +553,7 @@ compute!(ρ_initial)
 
 #setting time steps 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
-initial_travel_velocity = 0.01 # a number just to set an initial time step, determined from initial runs starting around 1ms
+initial_travel_velocity = intial_pipe_velocity # a number just to set an initial time step, determined from initial runs starting around 1ms, was 0.01 first 
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T #TRACER_MIN, set to tracer with biggest kappa, to use when horizontal and vertical diffusivities are used
