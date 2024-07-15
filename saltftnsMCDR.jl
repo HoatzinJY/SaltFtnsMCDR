@@ -154,7 +154,7 @@ pipe_top_depth = 3scale;
 pipe_bottom_depth = pipe_top_depth + pipe_length
 pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
 #pumping parameters
-height_displaced = 2scale;
+height_displaced = 1scale;
 initial_pipe_velocity = 0.001scale; #not yet used
 #pipe wall properties 
 mutable struct PipeWallData
@@ -239,23 +239,30 @@ T_bot = 11.86;
 S_bot = 34.18;
 S_top = 35.22;
 delta_z = 200; 
-#perturbation
+#no perturbation
 function T_init(x, y, z)
-    #inside pipe
-    if (isInsidePipe(x, z))
-        return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
-        #outside pipe
-    else
         return T_top - ((T_bot - T_top) / delta_z)z
-    end
 end
 function S_init(x, y, z)
-    if (isInsidePipe(x, z))
-        return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
-    else
         return S_top - ((S_bot - S_top) / delta_z)z
-    end
 end
+#perturbation
+# function T_init(x, y, z)
+#     #inside pipe
+#     if (isInsidePipe(x, z))
+#         return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
+#         #outside pipe
+#     else
+#         return T_top - ((T_bot - T_top) / delta_z)z
+#     end
+# end
+# function S_init(x, y, z)
+#     if (isInsidePipe(x, z))
+#         return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
+#     else
+#         return S_top - ((S_bot - S_top) / delta_z)z
+#     end
+# end
 #TODO: test these initial conditions
 #assuming having equalized temperature, steady state
 # function T_init(x, y, z)
@@ -297,7 +304,7 @@ S_init_target(x, z, t) = S_init(x, 0, z)
 S_init_target(x, y, z, t) = S_init(x, 0, z)
 function w_init(x, y, z)
     if (isInsidePipe(x, z))
-        #return initial_pipe_velocity;
+        return initial_pipe_velocity;
         return 0
     else
         return 0
@@ -317,6 +324,7 @@ function w_pump(x, y, z, t, w, p)
         return 0
     end
 end
+w_pump(x, z, t, w, p) = w_pump(x, 1, z, t, w, p)
 # #TODO: test this
 #this function forces the values in the wall to be equal to that immediately inside the pipe 
 #takes in discrete form location i, j, k, a model field, and a relaxation rate \
@@ -325,10 +333,10 @@ end
 function inpenetrable_wall_forcer(x_center, fieldNodes, i, j, k, field, rate)
     # on left side of pipe
     if(fieldNodes[1][i] < x_center)
-        return pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * rate * (field[i + 1, j, k] - field[i, j, k])
+        return @inbounds pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * rate * (field[i + 1, j, k] - field[i, j, k])
     #on right side of pipe
     else
-        return pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * rate * (field[i - 1, j, k] - field[i, j, k])
+        return @inbounds pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * rate * (field[i - 1, j, k] - field[i, j, k])
     end
 end
 
@@ -338,7 +346,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D fixed salinity entire time normal diffusivities real size"
+trial_name = "2D model w salinity pipe forcing and pumping initial conditions"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -514,10 +522,14 @@ S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters =
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
+#pipe wall velocities and property sponge layer, and pipe wall relaxation, and pumping
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, and internal pipe relaxation
+#pipe wall velocities and property sponge layer, and internal pipe relaxation, and pumping
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
 #pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
@@ -575,7 +587,7 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 filename = joinpath("Trials",trial_name)
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(5), overwrite_existing=true) 
 #time interval option
 # simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1minute), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?

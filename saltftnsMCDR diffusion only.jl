@@ -11,6 +11,7 @@ using GibbsSeaWater
 
 """currently only uses molecular diffusion as there is no motion""";
 
+trial_name = "3 different kappa"
 #= 
 NOTES
 - seems to be significanty slower after adding in forcing 
@@ -146,26 +147,43 @@ tracers = (:T, :S);
 timestepper = :RungeKutta3; 
 
 
-function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
-    if (z < 9 || wall_indicator == "WALL")
-        return 1 #edit to account for wall thickness
-    else 
-        return 0
-    end
-end
+# function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
+#     if (z < -9 || wall_indicator == "WALL")
+#         return 1 #edit to account for wall thickness
+#     else 
+#         return 0
+#     end
+# end
 #to test, with pipe wall, this sets top half pipe wall with big diffusivity, rest 2 degrees of magnitude less
 # function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
-#     if ((isPipeWall(x, z) && z < 9) || wall_indicator == "WALL")
+#     if ((isPipeWall(x, z) && z < -9) || wall_indicator == "WALL")
 #         return 1
 #     else 
 #         return 0.01
 #     end
 # end
-tempDiffusivities(x, z) = tempDiffusivities(x, 0, z, diffusivity_data, "")
-tempDiffusivities(x, y, z) = tempDiffusivities(x, y, z, diffusivity_data, "")
+function tempDiffusivities(x, y, z)
+    if (z < (-9))
+        @printf ("Diffusivity: %.1f", 1)
+        return 1
+    else 
+        @printf ("Diffusivity: %.1f", 1)
+        return 0.00001
+    end
+end
+function saltDiffusivities(x, y, z)
+    if (z < (-9))
+        return 1
+    else 
+        return 0.00001
+    end
+end
+emptyTuple = (a = 0, b = 0)
+tempDiffusivities(x, z) = tempDiffusivities(x, 0, z, emptyTuple, "")
+tempDiffusivities(x, y, z) = tempDiffusivities(x, y, z, emptyTuple, "")
 tempDiffusivities(x, y, z, parameters::NamedTuple) = tempDiffusivities(x, y, z, parameters, "")
 #option for walls - currently only thermal
-closure = ScalarDiffusivity(ν=viscosity.molecular, κ=(T=tempDiffusivities, S=1.3E-9))
+closure = ScalarDiffusivity(ν=0, κ=(T=tempDiffusivities, S=saltDiffusivities))
 
 #closure = ScalarDiffusivity(ν=0, κ=(T=1.46e-7, S=1.3E-9))
 #closure = ScalarDiffusivity(ν=0, κ=(S=0.5, T=1.0))
@@ -191,22 +209,24 @@ set!(model, T=T_init, S=S_init)
 @info "initial ocnditions set"
 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
-diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
+diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, emptyTuple, "WALL")
+#diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
+
 initial_time_step = 0.1*diffusion_time_scale
 #max_time_step = myCFL*diffusion_time_scale
 simulation_duration = 15day
-run_duration = 2minute;
+run_duration = 1minute;
 
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2) #TODO: set max delta t?
+timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2) 
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
-add_callback!(simulation, progress_message, IterationInterval(10))
+add_callback!(simulation, progress_message, IterationInterval(50))
 
 
 T = model.tracers.T;
 S = model.tracers.S;
-filename = "diffusion trial with cfldiffusion on to 0.2"
+filename = filename = joinpath("Diffusion testing",trial_name)
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; T, S); filename, schedule= IterationInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
@@ -259,3 +279,5 @@ record(fig, filename * "properties.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
+
+   
