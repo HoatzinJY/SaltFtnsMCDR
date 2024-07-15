@@ -99,7 +99,8 @@ function getIndexFromTime(time, timeSeries)
     @info "Run duration too short, animating until end"
     return numTotFrames
 end 
-function getMaskedAverage(mask::Function, field)
+#gets average over a masked area
+function getMaskedAverage(mask::Function, field, locs)
     fieldNodes = nodes(field.grid, locs, reshape = true)
     sum = 0;
     count = 0;
@@ -111,41 +112,50 @@ function getMaskedAverage(mask::Function, field)
     end
     return sum/count
 end
+getMaskedAverageTracer(mask::Function, field) = getMaskedAverage(mask::Function, field, (Center(), Center(), Center()))
+getMaskedAverageVelocity(mask::Function, field) = getMaskedAverage(mask::Function, field, (Face(), Face(), Face()))
+#returns background density of the general water column at depth z (before perturbation)
+function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)#takes a positive depth
+    eos = TEOS10EquationOfState() 
+    S_abs = gsw_sa_from_sp(Sfunc(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
+    T_consv = gsw_ct_from_t(S_abs, Tfunc(0,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
+    return TEOS10.ρ(T_consv, S_abs, z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
+end
 
 
-"""REAL SIZE ISH TEST"""
-scale = 1
-domain_x = 40scale # width, in meters
-domain_z = 300scale #height, in meters
-x_center = domain_x / 2;
-pipe_radius = 1scale;
-pipe_length = 200scale;
-pipe_top_depth = 50scale;
-pipe_bottom_depth = pipe_top_depth + pipe_length
-pipe_wall_thickness_intended = 0.02scale; #will be rounded up to nearest number of grid cells during grid setup
-#pumping parameters
-height_displaced = 40scale;
-initial_pipe_velocity = 0.001scale;
-
-
-# """DOMAIN SIZE"""
+# """REAL SIZE ISH TEST"""
 # scale = 1
-# domain_x = 15scale # width, in meters
-# domain_z = 18scale #height, in meters
+# domain_x = 40scale # width, in meters
+# domain_z = 300scale #height, in meters
 # x_center = domain_x / 2;
-
-
-
-# """PIPE AND PUMPING PARAMETERS"""
-# #TODO: make these a struct 
-# pipe_radius = 0.5scale;
-# pipe_length = 10scale;
-# pipe_top_depth = 3scale;
+# pipe_radius = 1scale;
+# pipe_length = 200scale;
+# pipe_top_depth = 50scale;
 # pipe_bottom_depth = pipe_top_depth + pipe_length
-# pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
+# pipe_wall_thickness_intended = 0.02scale; #will be rounded up to nearest number of grid cells during grid setup
 # #pumping parameters
-# height_displaced = 2scale;
-# initial_pipe_velocity = 0.001scale; #not yet used
+# height_displaced = 40scale;
+# initial_pipe_velocity = 0.001scale;
+
+
+"""DOMAIN SIZE"""
+scale = 1
+domain_x = 15scale # width, in meters
+domain_z = 18scale #height, in meters
+x_center = domain_x / 2;
+
+
+
+"""PIPE AND PUMPING PARAMETERS"""
+#TODO: make these a struct 
+pipe_radius = 0.5scale;
+pipe_length = 10scale;
+pipe_top_depth = 3scale;
+pipe_bottom_depth = pipe_top_depth + pipe_length
+pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
+#pumping parameters
+height_displaced = 2scale;
+initial_pipe_velocity = 0.001scale; #not yet used
 #pipe wall properties 
 mutable struct PipeWallData
     wall_thermal_diffusivity :: Float64 
@@ -219,6 +229,7 @@ end
 waterBorderMask(x, y, z) = waterBorderMask(x, z)
 
 
+
 """INITIAL CONDITIONS & WATER COLUMN CONDITIONS"""
 #sets initial t and s. Assumes that z will be negative. 
 #TODO:set up container functions for these to allow moving to another file 
@@ -229,34 +240,34 @@ S_bot = 34.18;
 S_top = 35.22;
 delta_z = 200; 
 #perturbation
-# function T_init(x, y, z)
-#     #inside pipe
-#     if (isInsidePipe(x, z))
-#         return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
-#         #outside pipe
-#     else
-#         return T_top - ((T_bot - T_top) / delta_z)z
-#     end
-# end
-# function S_init(x, y, z)
-#     if (isInsidePipe(x, z))
-#         return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
-#     else
-#         return S_top - ((S_bot - S_top) / delta_z)z
-#     end
-# end
-#TODO: test these initial conditions
-#assuming having equalized temperature, steady state
 function T_init(x, y, z)
-    return T_top - ((T_bot - T_top) / delta_z)z
+    #inside pipe
+    if (isInsidePipe(x, z))
+        return T_top - ((T_bot - T_top) / delta_z) * (z - height_displaced)
+        #outside pipe
+    else
+        return T_top - ((T_bot - T_top) / delta_z)z
+    end
 end
 function S_init(x, y, z)
     if (isInsidePipe(x, z))
-        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
+        return S_top - ((S_bot - S_top) / delta_z) * (z - height_displaced)
     else
         return S_top - ((S_bot - S_top) / delta_z)z
     end
 end
+#TODO: test these initial conditions
+#assuming having equalized temperature, steady state
+# function T_init(x, y, z)
+#     return T_top - ((T_bot - T_top) / delta_z)z
+# end
+# function S_init(x, y, z)
+#     if (isInsidePipe(x, z))
+#         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
+#     else
+#         return S_top - ((S_bot - S_top) / delta_z)z
+#     end
+# end
 #assuming not having equalized temperatures, but salinity equal to bottom
 # function T_init(x, y, z)
 #     #inside pipe, currently slightly lagging by 0.2 m
@@ -295,13 +306,33 @@ end
 w_init(x, z) = w_init(x, 0, z)
 
 #TODO: get a word for "general water column"  
-#returns background density of the general water column at depth z (before perturbation)
-function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)#takes a positive depth
-    eos = TEOS10EquationOfState() 
-    S_abs = gsw_sa_from_sp(Sfunc(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
-    T_consv = gsw_ct_from_t(S_abs, Tfunc(0,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
-    return TEOS10.ρ(T_consv, S_abs, z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
+
+"""FORCING FUNCTIONS"""
+# #TODO: test this 
+function w_pump(x, y, z, t, w, p)
+    pump_time = p.Δz / p.wₚ
+    if(isInsidePipe(x, z) && t < pump_time)
+        return p.f_rate * (p.wₚ - w)
+    else
+        return 0
+    end
 end
+# #TODO: test this
+#this function forces the values in the wall to be equal to that immediately inside the pipe 
+#takes in discrete form location i, j, k, a model field, and a relaxation rate \
+#TODO: this function could potentially be really slow, maybe 
+#TODO: test wall forcer --> tested manually, checked that it correctly identifies walls and gives correct forcing term
+function inpenetrable_wall_forcer(x_center, fieldNodes, i, j, k, field, rate)
+    # on left side of pipe
+    if(fieldNodes[1][i] < x_center)
+        return pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * rate * (field[i + 1, j, k] - field[i, j, k])
+    #on right side of pipe
+    else
+        return pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * rate * (field[i - 1, j, k] - field[i, j, k])
+    end
+end
+
+
 
 
 
@@ -335,7 +366,6 @@ z_res = floor(Int, domain_z / z_grid_spacing);
 domain_y = y_res * y_grid_spacing
 #miscellaneous
 pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
-locs = (Center(), Center(), Center());
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
@@ -364,19 +394,19 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 
 
 # #SECTION SETS NEW DIFFUSION VALUES BASED ON A DESIRED GRID SIZE, FOR TESTING PURPOSES, DO NOT USE IF EDDY DIFFUSIVITY IN USE
-# target_spacing = max_grid_spacing
-# minimum_diffusivity = (max_grid_spacing^2)/(0.25*oscillation_period) #TODO: check what this is 
-# minimum_diffusivity = 1.01*minimum_diffusivity #safety factor 
-# #now scale all according to minimum diffusivity 
-# #currently setting temperature as standard, and only editing tracers not viscosity, since only temperature goes through tube
-# #could also set the smallest diffusivity as the standard, in the case, salinity, may need to edit TRACER_MIN
-# reference_diffusivity = T_diffusivity.molecular
-# function rescaleDiffusivities(diff, scaleWith, scaleTo)
-#     return (diff/scaleWith)*scaleTo
-# end
-# T_diffusivity.molecular = rescaleDiffusivities(T_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
-# S_diffusivity.molecular = rescaleDiffusivities(S_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
-# pipe_data.wall_thermal_diffusivity = rescaleDiffusivities(pipe_data.wall_thermal_diffusivity, reference_diffusivity, minimum_diffusivity)
+target_spacing = max_grid_spacing
+minimum_diffusivity = (max_grid_spacing^2)/(0.25*oscillation_period) #TODO: check what this is 
+minimum_diffusivity = 1.01*minimum_diffusivity #safety factor 
+#now scale all according to minimum diffusivity 
+#currently setting temperature as standard, and only editing tracers not viscosity, since only temperature goes through tube
+#could also set the smallest diffusivity as the standard, in the case, salinity, may need to edit TRACER_MIN
+reference_diffusivity = T_diffusivity.molecular
+function rescaleDiffusivities(diff, scaleWith, scaleTo)
+    return (diff/scaleWith)*scaleTo
+end
+T_diffusivity.molecular = rescaleDiffusivities(T_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
+S_diffusivity.molecular = rescaleDiffusivities(S_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
+pipe_data.wall_thermal_diffusivity = rescaleDiffusivities(pipe_data.wall_thermal_diffusivity, reference_diffusivity, minimum_diffusivity)
 
 
 #TRACERS & DIFFUSION CLOSURES
@@ -472,14 +502,27 @@ S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target
 #sets forcing for salinity inside pipe
 pipe_damping_rate = 1/max_damping_rate
 S_pipe = Relaxation(rate = pipe_damping_rate, mask = pipeMask, target = S_init(0, 0, -pipe_bottom_depth))
+#sets initial forcing for velocity while pump driven 
+pump_info = (Δz = height_displaced, wₚ = initial_pipe_velocity, f_rate = max_damping_rate)
+w_pump_forcing = Forcing(w_pump, parameters = pump_info, field_dependencies = :w)
+#sets tracer in walls to be forced to that immediately inside pipe
+tracer_field_nodes = nodes(domain_grid,(Center(), Center(), Center()); reshape = true)
+S_wall_forcing_func(i, j, k, grid, clock, model_fields, rate) = inpenetrable_wall_forcer(x_center, tracer_field_nodes, i, j, k, model_fields.S, rate)
+S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters = max_damping_rate)
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+#pipe wall velocities and property sponge layer, and pipe wall relaxation
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, and internal pipe relaxation
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
+#pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
+
+
 
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
@@ -505,7 +548,7 @@ diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set 
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 # surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
-# initial_pipe_density = getMaskedAverage(pipeMask, ρ_initial)
+# initial_pipe_density = getMaskedAverageTracer(pipeMask, ρ_initial)
 # initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
 
 
@@ -514,7 +557,7 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
 #max time step set during model creation
 simulation_duration = 5day
-run_duration = 48hour
+run_duration = 20minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -532,9 +575,9 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 filename = joinpath("Trials",trial_name)
-#simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1minute), overwrite_existing=true) #can also set to TimeInterval
+# simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1minute), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
 run!(simulation; pickup=false)
