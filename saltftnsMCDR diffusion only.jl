@@ -11,7 +11,7 @@ using GibbsSeaWater
 
 """currently only uses molecular diffusion as there is no motion""";
 
-trial_name = "4 different kappa wall only"
+trial_name = "4 different kappa wall only LOW"
 #= 
 NOTES
 - seems to be significanty slower after adding in forcing 
@@ -159,11 +159,21 @@ timestepper = :RungeKutta3;
 #     end
 # end
 #to test, with pipe wall, this sets top half pipe wall with big diffusivity, rest normal, tested walls are indeed called
+# function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
+#     if ((isPipeWall(x, z) && z < 9) || wall_indicator == "WALL")
+#         return 0.5#edit to account for wall thickness
+#     else 
+#         return 0.0001
+#     end
+# end
+#another testing function, attempt with low wall diffusivity 
 function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
-    if ((isPipeWall(x, z) && z < 9) || wall_indicator == "WALL")
-        return 0.5#edit to account for wall thickness
+    if ((isPipeWall(x, z) && z < 9))
+        return 0.000000001#edit to account for wall thickness
+    elseif (wall_indicator == "WALL")
+        return 1
     else 
-        return 0.0001
+        return 1
     end
 end
 #to test, with pipe wall, this sets top half pipe wall with big diffusivity, rest 2 degrees of magnitude less
@@ -212,7 +222,7 @@ run_duration = 1minute;
 
 max_time_step = 0.2 * diffusion_time_scale
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2, max_Δt = max_time_step) 
+timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2, max_Δt =max_time_step) 
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
