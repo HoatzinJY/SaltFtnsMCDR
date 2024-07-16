@@ -404,7 +404,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model w salinity pipe WALL exterior mask STRIP and WENO"
+trial_name = "2D model w salinity pipe WALL exterior mask and WENO"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -453,8 +453,8 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 
 #ADVECTION SCHEME OPTIONS
 #advection = CenteredSecondOrder(); # will be relatively more oscillatory, "overshoots"
-advection = CenteredFourthOrder(); # still overshoots, but should be smoother 
-#advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
+#advection = CenteredFourthOrder(); # still overshoots, but should be smoother 
+advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
 #advection = WENO(order = 4); #should overshoot, but smoother 
 
 #BUOYANCY MODEL
@@ -582,7 +582,7 @@ S_wall_forcing_func(i, j, k, grid, clock, model_fields, rate) = inpenetrable_wal
 S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters = 1/max_damping_rate)
 #forces the outside of the pipe immediately to the surrounding to prevent diffusion
 pipe_exterior_damping_rate = 1/max_damping_rate
-S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRelaxationMaskStrip, target = S_init_target)
+S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRelaxationMask, target = S_init_target)
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 # pipe wall velocities only 
@@ -637,7 +637,7 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
 #max time step set during model creation
 simulation_duration = 5day
-run_duration = 45minute
+run_duration = 30minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
