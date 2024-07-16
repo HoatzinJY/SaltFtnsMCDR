@@ -8,11 +8,10 @@ using Oceananigans, SeawaterPolynomials.TEOS10
 using Oceananigans.Models: seawater_density
 using SeawaterPolynomials
 using GibbsSeaWater
-using Oceananigans.Grids: znode
 
 """currently only uses molecular diffusion as there is no motion""";
 
-trial_name = "3 different kappa"
+trial_name = "4 different kappa wall only"
 #= 
 NOTES
 - seems to be significanty slower after adding in forcing 
@@ -41,8 +40,9 @@ S_top = 34.18;
 delta_z = 200;
 
 #grid spacing
-x_grid_spacing = 0.05scale;# in meters
-z_grid_spacing = 0.05scale;# in meters
+#TODO:change this back to 0.05
+x_grid_spacing = 0.1scale;# in meters
+z_grid_spacing = 0.1scale;# in meters
 domain_x = 15scale; # width, in meters
 domain_z = 15scale; #height, in meters
 
@@ -148,36 +148,33 @@ advection = CenteredSecondOrder();
 tracers = (:T, :S); 
 timestepper = :RungeKutta3; 
 
-z = znode(1, 1, 1, domain_grid, Center(), Center(), Center())
 
 
-
+#test func, split top and bottom
+# function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
+#     if (z < (-9) || wall_indicator == "WALL")
+#         return 1 #edit to account for wall thickness
+#     else
+#         return 0.0001
+#     end
+# end
+#to test, with pipe wall, this sets top half pipe wall with big diffusivity, rest normal, tested walls are indeed called
 function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
-    if (z < (-9) || wall_indicator == "WALL")
-        @info @sprintf("ONE Depth: %.1f, Diffusivity: %.1f", z, 1)
-        return 1 #edit to account for wall thickness
+    if ((isPipeWall(x, z) && z < 9) || wall_indicator == "WALL")
+        return 0.5#edit to account for wall thickness
     else 
-        ("ZERO Depth: %.1f, Diffusivity: %.1f", z, 0.0001)
         return 0.0001
     end
 end
 #to test, with pipe wall, this sets top half pipe wall with big diffusivity, rest 2 degrees of magnitude less
-function saltDiffusivities(x, y, z)
-    if (z < (-9))
-        return 1
-    else 
-        return 0.0001
-    end
-end
 emptyTuple = (a = 0, b = 0)
 tempDiffusivities(x, z) = tempDiffusivities(x, 0, z, emptyTuple, "")
-tempDiffusivities(x, y, z) = tempDiffusivities(x, y, z, emptyTuple, "")
-tempDiffusivities(x, y, z, parameters::NamedTuple) = tempDiffusivities(x, y, z, parameters, "")
+tempDiffusivities(x, z, t) = tempDiffusivities(x, 0, z, emptyTuple, "")
 #option for walls - currently only thermal
-closure = ScalarDiffusivity(ν=0, κ=(T=tempDiffusivities, S=saltDiffusivities))
-
+closure = ScalarDiffusivity(ν=0, κ=(T=tempDiffusivities, S=1.3E-9))
 #closure = ScalarDiffusivity(ν=0, κ=(T=1.46e-7, S=1.3E-9))
 #closure = ScalarDiffusivity(ν=0, κ=(S=0.5, T=1.0))
+
 
 buoyancy = nothing
 # u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
@@ -202,13 +199,20 @@ min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, emptyTuple, "WALL")
 #diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 
+#diagnostics, dcfl shuld be equal to the number multiplying the diffusion ime scale by
+# model.closure.κ.T(0, 0, 0, emptyTuple, "WALL")
+# Δt = 0.1*diffusion_time_scale
+# dcfl = DiffusiveCFL(Δt)
+# dcfl(model) #is really low, not right 
+
 initial_time_step = 0.1*diffusion_time_scale
 #max_time_step = myCFL*diffusion_time_scale
 simulation_duration = 15day
 run_duration = 1minute;
 
+max_time_step = 0.2 * diffusion_time_scale
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2) 
+timeWizard = TimeStepWizard(cfl=0.2, diffusive_cfl = 0.2, max_Δt = max_time_step) 
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
@@ -269,5 +273,3 @@ record(fig, filename * "properties.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
-
-model.closure.κ.T
