@@ -241,7 +241,7 @@ function tracerRelaxationMask(x, y, z)
         return 0
     elseif(isInsidePipe(x, y, z) || isPipeWall(x, y, z))
         return 0
-    else
+    elseif(z > (-pipe_top_depth - (pipe_length/2))) #top half of pipe 
         #sets of constants to play with, TODO: delete section once set, for efficiency 
         #z_perturb_base = -3.5 #uses z sign convention
         #z_steepness = 0.3 #lower numbers = more steep
@@ -261,11 +261,31 @@ function tracerRelaxationMask(x, y, z)
             x_left_mask = 2 * sigmoid(x, (x_center - pipe_radius - pipe_wall_thickness), x_steepness)
             #z_mask = @sigmoid((-z), (-z_perturb_base), z_steepness)
             return x_left_mask
+        end 
+    else #for bottom half of pipe, return mirror image of top half 
+        mirror_depth = -(pipe_top_depth + pipe_length/2) + ((-z) - (pipe_top_depth + pipe_length/2))
+        return tracerRelaxationMask(x, y, mirror_depth)
+    end
+end
+#an option that sets just the layer immediately to the side to be forced 
+#function requires a grid size to already be set
+function tracerRelaxationMaskStrip(x, y, z)
+    if (x > x_center) #right side
+        if (isPipeWall(x - x_grid_spacing, z))
+            return 1
+        else
+            return 0
+        end
+    else #left side
+        if(isPipeWall(x + x_grid_spacing, z))
+            return 1
+        else
+            return 0
         end
     end
 end
 tracerRelaxationMask(x, z) = tracerRelaxationMask(x, 0, z)
-
+tracerRelaxationMaskStrip(x, z) = tracerRelaxationMaskStrip(x, 0, z)
 plotTracerMask(tracerRelaxationMask, model)
 
 """INITIAL CONDITIONS & WATER COLUMN CONDITIONS"""
@@ -384,7 +404,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model w salinity pipe WALL and CenteredFourthOrder"
+trial_name = "2D model w salinity pipe WALL exterior mask STRIP and WENO"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -550,9 +570,9 @@ border_damping_rate = 1/max_damping_rate
 uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
-#sets forcing for salinity inside pipe
-pipe_damping_rate = 1/max_damping_rate
-S_pipe = Relaxation(rate = pipe_damping_rate, mask = pipeMask, target = S_init(0, 0, -pipe_bottom_depth))
+#sets forcing for salinity inside pipe --> NO LONGER USED, USE WALL FORCING INSTEAD, SEE TRACER FORCING IN WALLS BELOW
+# pipe_damping_rate = 1/max_damping_rate
+# S_pipe = Relaxation(rate = pipe_damping_rate, mask = pipeMask, target = S_init(0, 0, -pipe_bottom_depth))
 #sets initial forcing for velocity while pump driven 
 pump_info = (Δz = height_displaced, wₚ = initial_pipe_velocity, f_rate = 1/max_damping_rate)
 w_pump_forcing = Forcing(w_pump, parameters = pump_info, field_dependencies = :w)
@@ -560,14 +580,19 @@ w_pump_forcing = Forcing(w_pump, parameters = pump_info, field_dependencies = :w
 tracer_field_nodes = nodes(domain_grid,(Center(), Center(), Center()); reshape = true)
 S_wall_forcing_func(i, j, k, grid, clock, model_fields, rate) = inpenetrable_wall_forcer(x_center, tracer_field_nodes, i, j, k, model_fields.S, rate)
 S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters = 1/max_damping_rate)
+#forces the outside of the pipe immediately to the surrounding to prevent diffusion
+pipe_exterior_damping_rate = 1/max_damping_rate
+S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRelaxationMaskStrip, target = S_init_target)
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
-#pipe wall velocities and property sponge layer, and pipe wall relaxation
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
+#pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
+#pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing, S_wall_exterior))
 #pipe wall velocities and property sponge layer, and pipe wall relaxation, and pumping
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, and internal pipe relaxation
@@ -612,7 +637,7 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
 #max time step set during model creation
 simulation_duration = 5day
-run_duration = 20minute
+run_duration = 45minute
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
