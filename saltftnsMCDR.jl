@@ -77,6 +77,8 @@ geopotential_height = 0; # sea surface height for potential density calculations
 """COMPUTATIONAL FUNCTIONS"""
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
 findNearest(A::AbstractArray, x) = findmin(abs(A-x)) # returns [nearest value, value index]
+sigmoid(var, center, steepness) = 1/(1 + exp(-(var - center)/steepness))
+xFlippedSigmoid(var, center, steepness) = 1/(1 + exp((var - center)/steepness))
 function getMaxAndMin(numPoints, dataSeries)
     myMax = maximum(interior(dataSeries[1], :, 1, :))
     myMin = minimum(interior(dataSeries[1], :, 1, :))
@@ -177,6 +179,7 @@ function isInsidePipe(x, z)
         return false
     end
 end
+isInsidePipe(x, y, z) = isInsidePipe(x, z)
 function pipeMask(x, z)
     if (isInsidePipe(x, z))
         return 1
@@ -196,6 +199,7 @@ function isPipeWall(x, z)
         return false
     end
 end
+isPipeWall(x, y, z) = isPipeWall(x, z)
 function pipeWallMask(x,z)
     if (isPipeWall(x, z))
         return 1
@@ -227,8 +231,42 @@ function  waterBorderMask(x, z)
     end
 end
 waterBorderMask(x, y, z) = waterBorderMask(x, z)
+#to mimic prevent diffusion through pipe walls
+#TODO: change around these constants and see
+#TODO: figure out how toinline functions
+#this function requires the grid to first be processes to give it actual pipe wall width, and for the pipe top depth to be given 
+function tracerRelaxationMask(x, y, z)
+    #no masking above top of pipe
+    if(z > (-pipe_top_depth))
+        return 0
+    elseif(isInsidePipe(x, y, z) || isPipeWall(x, y, z))
+        return 0
+    else
+        #sets of constants to play with, TODO: delete section once set, for efficiency 
+        #z_perturb_base = -3.5 #uses z sign convention
+        #z_steepness = 0.3 #lower numbers = more steep
+        #TODO: calculate neccessary steepness to have mask of approximately 1 by the time 1 grid cell has happened
+        #TODO: make these a function of grid size? 
+        x_steepness_final = 5 #will be slightly larger than this by x steepness initial
+        x_steepness_initial = 0.01 #the smaller this is, the steeper
+        xz_steepness = 5 #how quickly x mask becomes gentler as you go down, smaller = quicker
 
+        x_steepness = x_steepness_final*2 * sigmoid((-z),(pipe_top_depth),xz_steepness) - (x_steepness_final) + x_steepness_initial
 
+        if(x > x_center)
+            x_right_mask =  2 * xFlippedSigmoid(x, (x_center + pipe_radius + pipe_wall_thickness),x_steepness)
+            #z_mask = @sigmoid((-z), (-z_perturb_base), z_steepness)
+            return x_right_mask
+        else 
+            x_left_mask = 2 * sigmoid(x, (x_center - pipe_radius - pipe_wall_thickness), x_steepness)
+            #z_mask = @sigmoid((-z), (-z_perturb_base), z_steepness)
+            return x_left_mask
+        end
+    end
+end
+tracerRelaxationMask(x, z) = tracerRelaxationMask(x, 0, z)
+
+plotTracerMask(tracerRelaxationMask, model)
 
 """INITIAL CONDITIONS & WATER COLUMN CONDITIONS"""
 #sets initial t and s. Assumes that z will be negative. 
@@ -346,7 +384,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model w salinity pipe forcing no velocity forcing and CenteredFourthOrder"
+trial_name = "2D model w salinity pipe WALL and CenteredFourthOrder"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -395,8 +433,8 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 
 #ADVECTION SCHEME OPTIONS
 #advection = CenteredSecondOrder(); # will be relatively more oscillatory, "overshoots"
-#advection = CenteredFourthOrder(); # still overshoots, but should be smoother 
-advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
+advection = CenteredFourthOrder(); # still overshoots, but should be smoother 
+#advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
 #advection = WENO(order = 4); #should overshoot, but smoother 
 
 #BUOYANCY MODEL
@@ -529,14 +567,13 @@ S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters =
 #pipe wall velocities and property sponge layer 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation
-#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, and pipe wall relaxation, and pumping
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, and internal pipe relaxation
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
 #pipe wall velocities and property sponge layer, and internal pipe relaxation, and pumping
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
-#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
 #pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
 
@@ -764,7 +801,6 @@ compute!(density_field)
 
 #function takes a model
 function plotInitialConditions(m)
-    m = model
     geopotential_height = 0
     density_operation = density_operation = seawater_density(m; geopotential_height)
     density_field = Field(density_operation)
@@ -797,6 +833,30 @@ function plotInitialConditions(m)
     Colorbar(fig[3, 2], hm3)
     return fig
 end 
+
+
+function plotTracerMask(mask::Function, m)
+    fig = Figure()
+    title = "tracer mask"
+    Label(fig[0, :], title)
+    x = xnodes(m.tracers.T)
+    z = znodes(m.tracers.T)
+    myNodes = nodes(model.grid, (Center(), Center(), Center()), reshape = true)
+    maskArray = zeros(Float64, size(myNodes[1])[1], size(myNodes[3])[3])
+    for i in eachindex(myNodes[1])
+        for j in eachindex(myNodes[3])
+            maskArray[i, j] = mask(myNodes[1][i], myNodes[3][j])
+        end
+    end
+
+    axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
+
+    ax = Axis(fig[1, 1]; title="Temperature (C)", axis_kwargs...)
+    lims = (minimum(maskArray), maximum(maskArray));
+    hm = heatmap!(ax, x, z, maskArray, colorrange=lims, colormap=:grays, interpolate=true)
+    Colorbar(fig[1, 2], hm)
+    return fig
+end
 
 #check that model has reset - plot velocities
 fig = Figure()
