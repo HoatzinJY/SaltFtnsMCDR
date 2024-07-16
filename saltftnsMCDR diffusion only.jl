@@ -8,6 +8,7 @@ using Oceananigans, SeawaterPolynomials.TEOS10
 using Oceananigans.Models: seawater_density
 using SeawaterPolynomials
 using GibbsSeaWater
+using Oceananigans.Grids: znode
 
 """currently only uses molecular diffusion as there is no motion""";
 
@@ -120,6 +121,7 @@ end
 waterBorderMask(x, y, z) = waterBorderMask(x, z)
 
 
+#
 #sets initial t and s
 #TODO:set up container functions for these to allow moving to another file 
 function T_init(x, z)
@@ -146,36 +148,25 @@ advection = CenteredSecondOrder();
 tracers = (:T, :S); 
 timestepper = :RungeKutta3; 
 
+z = znode(1, 1, 1, domain_grid, Center(), Center(), Center())
 
-# function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
-#     if (z < -9 || wall_indicator == "WALL")
-#         return 1 #edit to account for wall thickness
-#     else 
-#         return 0
-#     end
-# end
-#to test, with pipe wall, this sets top half pipe wall with big diffusivity, rest 2 degrees of magnitude less
-# function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
-#     if ((isPipeWall(x, z) && z < -9) || wall_indicator == "WALL")
-#         return 1
-#     else 
-#         return 0.01
-#     end
-# end
-function tempDiffusivities(x, y, z)
-    if (z < (-9))
-        @printf ("Diffusivity: %.1f", 1)
-        return 1
+
+
+function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
+    if (z < (-9) || wall_indicator == "WALL")
+        @info @sprintf("ONE Depth: %.1f, Diffusivity: %.1f", z, 1)
+        return 1 #edit to account for wall thickness
     else 
-        @printf ("Diffusivity: %.1f", 1)
-        return 0.00001
+        ("ZERO Depth: %.1f, Diffusivity: %.1f", z, 0.0001)
+        return 0.0001
     end
 end
+#to test, with pipe wall, this sets top half pipe wall with big diffusivity, rest 2 degrees of magnitude less
 function saltDiffusivities(x, y, z)
     if (z < (-9))
         return 1
     else 
-        return 0.00001
+        return 0.0001
     end
 end
 emptyTuple = (a = 0, b = 0)
@@ -187,7 +178,6 @@ closure = ScalarDiffusivity(ν=0, κ=(T=tempDiffusivities, S=saltDiffusivities))
 
 #closure = ScalarDiffusivity(ν=0, κ=(T=1.46e-7, S=1.3E-9))
 #closure = ScalarDiffusivity(ν=0, κ=(S=0.5, T=1.0))
-
 
 buoyancy = nothing
 # u_damping_rate = 1/0.1 #relaxes fields on 0.1 second time scale
@@ -280,4 +270,4 @@ record(fig, filename * "properties.mp4", frames, framerate=8) do i
     n[] = i
 end
 
-   
+model.closure.κ.T

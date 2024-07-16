@@ -346,7 +346,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model w salinity pipe forcing and pumping initial conditions"
+trial_name = "2D model w salinity pipe forcing no velocity forcing and CenteredFourthOrder"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -390,9 +390,14 @@ domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_
 
 #MISCELLANEOUS
 clock = Clock{eltype(domain_grid)}(time=0);
-advection = CenteredSecondOrder(); #default, not sure which one to choose
 timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available 
 
+
+#ADVECTION SCHEME OPTIONS
+#advection = CenteredSecondOrder(); # will be relatively more oscillatory, "overshoots"
+#advection = CenteredFourthOrder(); # still overshoots, but should be smoother 
+advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
+#advection = WENO(order = 4); #should overshoot, but smoother 
 
 #BUOYANCY MODEL
 # buoyancy = nothing # testing option
@@ -401,20 +406,20 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 #buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4, haline_contraction = 78e-5)); #TODO: potentially add more accuracy here, currently set to global average
 
 
-# #SECTION SETS NEW DIFFUSION VALUES BASED ON A DESIRED GRID SIZE, FOR TESTING PURPOSES, DO NOT USE IF EDDY DIFFUSIVITY IN USE
-target_spacing = max_grid_spacing
-minimum_diffusivity = (max_grid_spacing^2)/(0.25*oscillation_period) #TODO: check what this is 
-minimum_diffusivity = 1.01*minimum_diffusivity #safety factor 
-#now scale all according to minimum diffusivity 
-#currently setting temperature as standard, and only editing tracers not viscosity, since only temperature goes through tube
-#could also set the smallest diffusivity as the standard, in the case, salinity, may need to edit TRACER_MIN
-reference_diffusivity = T_diffusivity.molecular
-function rescaleDiffusivities(diff, scaleWith, scaleTo)
-    return (diff/scaleWith)*scaleTo
-end
-T_diffusivity.molecular = rescaleDiffusivities(T_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
-S_diffusivity.molecular = rescaleDiffusivities(S_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
-pipe_data.wall_thermal_diffusivity = rescaleDiffusivities(pipe_data.wall_thermal_diffusivity, reference_diffusivity, minimum_diffusivity)
+# #SECTION SETS NEW DIFFUSION VALUES BASED ON A DESIRED GRID SIZE, FOR TESTING PURPOSES, DO NOT USE IF EDDY DIFFUSIVITY IN USE, currently not in use due to no oscillation
+# target_spacing = max_grid_spacing
+# minimum_diffusivity = (max_grid_spacing^2)/(0.25*oscillation_period) #TODO: check what this is 
+# minimum_diffusivity = 1.01*minimum_diffusivity #safety factor 
+# #now scale all according to minimum diffusivity 
+# #currently setting temperature as standard, and only editing tracers not viscosity, since only temperature goes through tube
+# #could also set the smallest diffusivity as the standard, in the case, salinity, may need to edit TRACER_MIN
+# reference_diffusivity = T_diffusivity.molecular
+# function rescaleDiffusivities(diff, scaleWith, scaleTo)
+#     return (diff/scaleWith)*scaleTo
+# end
+# T_diffusivity.molecular = rescaleDiffusivities(T_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
+# S_diffusivity.molecular = rescaleDiffusivities(S_diffusivity.molecular, reference_diffusivity, minimum_diffusivity)
+# pipe_data.wall_thermal_diffusivity = rescaleDiffusivities(pipe_data.wall_thermal_diffusivity, reference_diffusivity, minimum_diffusivity)
 
 
 #TRACERS & DIFFUSION CLOSURES
@@ -528,8 +533,9 @@ S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters =
 #pipe wall velocities and property sponge layer, and pipe wall relaxation, and pumping
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, and internal pipe relaxation
-#pipe wall velocities and property sponge layer, and internal pipe relaxation, and pumping
 forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
+#pipe wall velocities and property sponge layer, and internal pipe relaxation, and pumping
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_pipe))
 #pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
@@ -553,7 +559,7 @@ compute!(ρ_initial)
 
 #setting time steps 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
-initial_travel_velocity = intial_pipe_velocity # a number just to set an initial time step, determined from initial runs starting around 1ms, was 0.01 first 
+initial_travel_velocity = initial_pipe_velocity # a number just to set an initial time step, determined from initial runs starting around 1ms, was 0.01 first 
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T #TRACER_MIN, set to tracer with biggest kappa, to use when horizontal and vertical diffusivities are used
