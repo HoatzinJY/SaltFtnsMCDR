@@ -12,7 +12,9 @@ using NetCDF
 
 
 """TODO: NEW GRID SPACING AND MAX TIME STEP WITHOUT WORRYING ABOUT OSCILLATION AND INSTEAD ABOUT BOUNDARY LAYER, 
-PERHAPS SHOULD KEEP CURRENT BECUASE THERE IS OSCILLATION AT THE END"""
+PERHAPS SHOULD KEEP CURRENT BECUASE THERE IS OSCILLATION AT THE END
+SHOUDL REALLY THINK ABOUT THE TIMESTEP PROBLEM, CANT BE RELAXING TOO SLOW, MAYBE ADD A CALLBACK ON RELAXATION TIME
+TO BE A FUNCTION OF THE TIMESTEP?"""
 #IF ADD IN MORE TRACERS OR HAVE WALL SPECIFIC ONES, LOOK FOR LINES LABELED TRACER_MIN, need to edit, add function that takes min/max of things
 #to swap between bounded and periodic, look for LAB_SET
 
@@ -406,7 +408,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model with different kappas no wall exterior forcing"
+trial_name = "2D model with different kappas no wall exterior forcing WENO 9"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -456,8 +458,8 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 #ADVECTION SCHEME OPTIONS
 #advection = CenteredSecondOrder(); # will be relatively more oscillatory, "overshoots"
 #advection = CenteredFourthOrder(); # still overshoots, but should be smoother 
-advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
-#advection = WENO(order = 4); #should overshoot, but smoother 
+#advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
+advection = WENO(order = 9)
 
 #BUOYANCY MODEL
 # buoyancy = nothing # testing option
@@ -497,7 +499,7 @@ function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::Stri
         return parameters[:seawater].T.molecular
     end
 end
-tempDiffusivities(x, z, t) = tempDiffusivities(x, y, z, diffusivity_data, "")
+tempDiffusivities(x, z, t) = tempDiffusivities(x, 0, z, diffusivity_data, "")
 function saltDiffusivities(x, y, z, parameters::NamedTuple)
     if (isPipeWall(x, z))
         return 0
@@ -505,7 +507,7 @@ function saltDiffusivities(x, y, z, parameters::NamedTuple)
         return parameters[:seawater].S.molecular
     end
 end
-saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, y, z, diffusivity_data)
+saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
 horizontal_closure = HorizontalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
 vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 #option for no walls, just molecular diffusivities - TESTED
@@ -631,7 +633,7 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 1hour
+run_duration = 3hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -649,9 +651,9 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 filename = joinpath("Trials",trial_name)
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
+#simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
-# simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1minute), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
 run!(simulation; pickup=false)
