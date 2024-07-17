@@ -61,7 +61,8 @@ mutable struct DiffusionParameter
     isopycnal::Float64 #horizontal
     diapycnal::Float64 #vertical
 end
-mutable struct SeawaterDiffusivityData
+mutable struct SeawaterData
+    ν :: DiffusionParameter
     T :: DiffusionParameter
     S :: DiffusionParameter
 end
@@ -72,7 +73,7 @@ eddy_vertical_diffusivity = 1e-5
 my_viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
 T_diffusivity = DiffusionParameter(1.46e-7, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
-seawater_diffusion_data = SeawaterDiffusivityData(T_diffusivity, S_diffusivity)
+seawater_diffusion_data = SeawaterData(my_viscosity, T_diffusivity, S_diffusivity)
 
 
 geopotential_height = 0; # sea surface height for potential density calculations
@@ -513,6 +514,14 @@ function saltDiffusivities(x, y, z, parameters::NamedTuple)
     end
 end
 saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
+function myViscosity(x, y, z, parameters::NamedTuple)
+    if (isPipeWall(x, z))
+        return 0
+    else 
+        return parameters[:seawater].ν.molecular
+    end
+end
+myViscosity(x ,z ,t ) = myViscosity(x, 0, z, diffusivity_data)
 horizontal_closure = HorizontalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
 vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 #option for no walls, just molecular diffusivities - TESTED
@@ -522,8 +531,9 @@ vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_visc
 #option for walls - thermal only
 # closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular))
 #option for walls: thermal and salt
-closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=saltDiffusivities))
-
+#closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=saltDiffusivities))
+#option for walls: thermal and salt and zero viscosity
+closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffusivities))
 
 
 #BOUNDARY CONDITIONS
@@ -605,7 +615,7 @@ forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_bo
 
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
-
+"""SET UP MODEL"""
 #sets up model
 model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing, boundary_conditions)
 @info "model made"
@@ -613,13 +623,15 @@ model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, trac
 density_operation = seawater_density(model; geopotential_height)
 #rounds number num up to nearest multiple of base
 
+"""SET INITIAL CONDITIONS"""
 set!(model, T=T_init, S=S_init, w=w_init)
 ρ_initial = Field(density_operation)
 compute!(ρ_initial)
 @info "initial conditions set"
 
 
-#setting time steps 
+"""SIMULATION SET UP"""
+#FINDING TIME SCALES
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 initial_travel_velocity = initial_pipe_velocity # a number just to set an initial time step, determined from initial runs starting around 1ms, was 0.01 first 
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
@@ -631,23 +643,22 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 # initial_pipe_density = getMaskedAverageTracer(pipeMask, ρ_initial)
 # initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
 
-
-
+#SETTING TIME STEPS
 #for intial time step to be ok, next step need to increase, currently its 500ms, seems to increase)
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 2hour
+run_duration = 30min
 
-#running model
+#IMPLEMENTING SIMULATION
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step) #TODO: set max delta t?
-simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
+
+#PROGRESS MESSAGE
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
-add_callback!(simulation, progress_message, IterationInterval(50))
+add_callback!(simulation, progress_message, name=:progress_message, IterationInterval(50))
 
-
+#SIMULATION FILE WRITERS
 #fields = Dict("u" => model.velocities.u, "w" => model.velocities.w, "T" => model.tracers.T, "S" => model.tracers.S)
 w = model.velocities.w;
 u = model.velocities.u;
@@ -661,6 +672,19 @@ filename = joinpath("Trials",trial_name)
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
+#TIME STEPPER 
+update_iteration = 4
+timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step) #TODO: set max delta t?
+simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(update_iteration))
+
+# #CALLBACK FOR RELAXATION INTERVAL TO PREVENT LEAKAGE
+# function updateRelaxation()
+    
+# end
+# add_callback!(simulation, updateRelaxation, name=:relaxation_updater, IterationInterval(update_iteration), callsite = )
+
+
+"""RUN SIMULATION"""
 run!(simulation; pickup=false)
 
 
