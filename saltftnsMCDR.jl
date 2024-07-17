@@ -331,7 +331,7 @@ function T_init(x, y, z)
     return T_top - ((T_bot - T_top) / delta_z)z
 end
 function S_init(x, y, z)
-    if (isInsidePipe(x, z))
+    if (isInsidePipe(x, z) || isPipeWall(x, z))
         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
     else
         return S_top - ((S_bot - S_top) / delta_z)z
@@ -408,7 +408,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model with different kappas no wall exterior forcing WENO 9"
+trial_name = "2D model with different kappas no wall forcing AT ALL"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -458,8 +458,8 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 #ADVECTION SCHEME OPTIONS
 #advection = CenteredSecondOrder(); # will be relatively more oscillatory, "overshoots"
 #advection = CenteredFourthOrder(); # still overshoots, but should be smoother 
-#advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
-advection = WENO(order = 9)
+advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
+#advection = WENO(order = 9)
 
 #BUOYANCY MODEL
 # buoyancy = nothing # testing option
@@ -633,7 +633,7 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 3hour
+run_duration = 6hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
@@ -653,7 +653,7 @@ S = model.tracers.S;
 filename = joinpath("Trials",trial_name)
 #simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 
 run!(simulation; pickup=false)
