@@ -11,7 +11,7 @@ using GibbsSeaWater
 
 """currently only uses molecular diffusion as there is no motion""";
 
-trial_name = "4 different kappa wall only LOW"
+trial_name = "4 different kappa wall only zero"
 #= 
 NOTES
 - seems to be significanty slower after adding in forcing 
@@ -169,7 +169,7 @@ timestepper = :RungeKutta3;
 #another testing function, attempt with low wall diffusivity 
 function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
     if ((isPipeWall(x, z) && z < 9))
-        return 0.000000001#edit to account for wall thickness
+        return 0#edit to account for wall thickness
     elseif (wall_indicator == "WALL")
         return 1
     else 
