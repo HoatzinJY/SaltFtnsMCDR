@@ -10,26 +10,22 @@ using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
 
-
 """TODO: NEW GRID SPACING AND MAX TIME STEP WITHOUT WORRYING ABOUT OSCILLATION AND INSTEAD ABOUT BOUNDARY LAYER, 
 PERHAPS SHOULD KEEP CURRENT BECUASE THERE IS OSCILLATION AT THE END
 SHOUDL REALLY THINK ABOUT THE TIMESTEP PROBLEM, CANT BE RELAXING TOO SLOW, MAYBE ADD A CALLBACK ON RELAXATION TIME
 TO BE A FUNCTION OF THE TIMESTEP?"""
+
 #IF ADD IN MORE TRACERS OR HAVE WALL SPECIFIC ONES, LOOK FOR LINES LABELED TRACER_MIN, need to edit, add function that takes min/max of things
 #to swap between bounded and periodic, look for LAB_SET
-
 #NEXT RUN: NO WALLS TRIAL
 # EVEN WITH CORRECT PERTURBATION IT DIVERGES
 # realized: STABLE WITH 10x steeper gradient but not this, also unstable once a sponge layer is thrown in 
 #thought: looking at traceradvection term, look at how time step wizard does normal cfl 
 #thought: add nutrients, carbon
-
 #think --> look at diffusion, and relaxation term, how to get target from field 
 #think --> look at how to set variable kappa
 #TODO: figure out field argument and how to manipulate 
 #when reading file, maybe use discrete?
-
-
 #= 
 - add in ability to take in external field
 - make wall forcings accurate to friction
@@ -37,11 +33,9 @@ TO BE A FUNCTION OF THE TIMESTEP?"""
 - make diffusion and viscous terms accurate to mixing 
 - accurately model infinity reservoir
 - figure out issue with temperature --> potentially graph the average field? 
-
 # TODO: to resolve above problem, maybe average temperature over certain grid cells
 to do above, can use 
 Oceananigans.AbstractOperations.Average, dimensions is three tuple,
-
 =#
 #TODO: problem: wall
 #TODO: organizize file, declare variables as global and make function file, change init to profile 
@@ -49,20 +43,20 @@ Oceananigans.AbstractOperations.Average, dimensions is three tuple,
 #TODO: figure out why it seems to be diverging, timestep too large, or, diverges over approx 50min
 #linked with above, dampening?, should besomething to do with viscosity? 
 #TODO: accept external temp files
+
+
 """CONSTANTS AND PHYSICAL PROPERTIES"""
 const day = 86400;
 const hour = 3600;
 const minute = 60;
 const g = 9.806; 
 const CFL = 0.2;#gravitational acceleration, in m^2/s
-
 mutable struct DiffusionParameter
     molecular::Float64
     isopycnal::Float64 #horizontal
     diapycnal::Float64 #vertical
 end
-mutable struct SeawaterData
-    ν :: DiffusionParameter
+mutable struct SeawaterDiffusivityData
     T :: DiffusionParameter
     S :: DiffusionParameter
 end
@@ -73,11 +67,10 @@ eddy_vertical_diffusivity = 1e-5
 my_viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
 T_diffusivity = DiffusionParameter(1.46e-7, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
-seawater_diffusion_data = SeawaterData(my_viscosity, T_diffusivity, S_diffusivity)
-
-
+seawater_diffusion_data = SeawaterDiffusivityData(T_diffusivity, S_diffusivity)
 geopotential_height = 0; # sea surface height for potential density calculations
 #useful auxilliary functions
+
 
 
 """COMPUTATIONAL FUNCTIONS"""
@@ -129,8 +122,6 @@ function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)#takes a posit
     T_consv = gsw_ct_from_t(S_abs, Tfunc(0,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
     return TEOS10.ρ(T_consv, S_abs, z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
 end
-
-
 # """REAL SIZE ISH TEST"""
 # scale = 1
 # domain_x = 40scale # width, in meters
@@ -144,6 +135,7 @@ end
 # #pumping parameters
 # height_displaced = 40scale;
 # initial_pipe_velocity = 0.001scale;
+
 
 
 """DOMAIN SIZE"""
@@ -175,6 +167,8 @@ wall_material_cₚ = 376.812 #specific heat capacity under constant pressure, J/
 wall_material_k = 50.208#thermal conductivity (W/(mK))
 pipe_data = PipeWallData(wall_material_k/(wall_material_cₚ*wall_material_ρ), pipe_wall_thickness_intended)
 @info @sprintf("Wall Material Diffusivity Unscaled: %.3e", pipe_data.wall_thermal_diffusivity)
+
+
 
 """MASKING FUNCTIONS"""
 #TODO: these all use a pipe_wall_thickness --> should pass that in instead, since that is calculated during grid making
@@ -256,9 +250,7 @@ function tracerRelaxationMask(x, y, z)
         x_steepness_final = 5 #will be slightly larger than this by x steepness initial
         x_steepness_initial = 0.01 #the smaller this is, the steeper
         xz_steepness = 5 #how quickly x mask becomes gentler as you go down, smaller = quicker
-
         x_steepness = x_steepness_final*2 * sigmoid((-z),(pipe_top_depth),xz_steepness) - (x_steepness_final) + x_steepness_initial
-
         if(x > x_center)
             x_right_mask =  2 * xFlippedSigmoid(x, (x_center + pipe_radius + pipe_wall_thickness),x_steepness)
             #z_mask = @sigmoid((-z), (-z_perturb_base), z_steepness)
@@ -292,6 +284,8 @@ function tracerRelaxationMaskStrip(x, y, z)
 end
 tracerRelaxationMask(x, z) = tracerRelaxationMask(x, 0, z)
 tracerRelaxationMaskStrip(x, z) = tracerRelaxationMaskStrip(x, 0, z)
+
+
 
 """INITIAL CONDITIONS & WATER COLUMN CONDITIONS"""
 #sets initial t and s. Assumes that z will be negative. 
@@ -379,9 +373,7 @@ function w_init(x, y, z)
     end
 end
 w_init(x, z) = w_init(x, 0, z)
-
 #TODO: get a word for "general water column"  
-
 """FORCING FUNCTIONS"""
 # #TODO: test this 
 function w_pump(x, y, z, t, w, p)
@@ -409,15 +401,19 @@ function inpenetrable_wall_forcer(x_center, fieldNodes, i, j, k, field, rate)
 end
 
 
+
 #TODO: sepparate initial functions and profile functions 
 
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model with different kappas no wall forcing AT ALL"
+trial_name = "test"
+
+
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
+surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init_b) - getBackgroundDensity(-pipe_top_depth, T_init, S_init_b))/pipe_length #takes average for unaltered water column
 oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
@@ -456,6 +452,7 @@ domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_
 #2d option  
 #domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
 
+
 #MISCELLANEOUS
 clock = Clock{eltype(domain_grid)}(time=0);
 timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available 
@@ -466,6 +463,7 @@ timestepper = :QuasiAdamsBashforth2; #default, 3rd order option available
 #advection = CenteredFourthOrder(); # still overshoots, but should be smoother 
 advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th order
 #advection = WENO(order = 9)
+
 
 #BUOYANCY MODEL
 # buoyancy = nothing # testing option
@@ -492,9 +490,7 @@ advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th or
 
 #TRACERS & DIFFUSION CLOSURES
 tracers = (:T, :S); #temperature, salinity
-
 """IMPORTANT: order of definition of kappas matter,must define in same order as tracer statement even though finding it later works""";
-
 diffusivity_data = (seawater = seawater_diffusion_data, pipe = pipe_data)
 #TODO: this function uses nonlocal data  #working on the named tuple it should take 
 #this function also uses nonlocal data for pipe wall thickness and pipe wall thickness intended
@@ -514,14 +510,6 @@ function saltDiffusivities(x, y, z, parameters::NamedTuple)
     end
 end
 saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
-function myViscosity(x, y, z, parameters::NamedTuple)
-    if (isPipeWall(x, z))
-        return 0
-    else 
-        return parameters[:seawater].ν.molecular
-    end
-end
-myViscosity(x ,z ,t ) = myViscosity(x, 0, z, diffusivity_data)
 horizontal_closure = HorizontalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
 vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 #option for no walls, just molecular diffusivities - TESTED
@@ -531,9 +519,7 @@ vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_visc
 #option for walls - thermal only
 # closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular))
 #option for walls: thermal and salt
-#closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=saltDiffusivities))
-#option for walls: thermal and salt and zero viscosity
-closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffusivities))
+closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=saltDiffusivities))
 
 
 #BOUNDARY CONDITIONS
@@ -541,13 +527,14 @@ closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffu
 #TODO: use this instead of relaxation to imitate infinite reservoir
 initial_T_top_gradient = (T_init(0,0) - T_init(0, 0 - z_grid_spacing))/z_grid_spacing
 initial_T_bottom_gradient = (T_init(0, domain_z + z_grid_spacing) - T_init(0, domain_z))/z_grid_spacing
+initial_S_top_gradient = (S_init(0, 0 - z_grid_spacing) - S_init(0,0))/z_grid_spacing
+initial_S_bottom_gradient = (S_init(0, domain_z) - S_init(0, domain_z + z_grid_spacing))/z_grid_spacing
 initial_S_top_gradient = (S_init_b(0, 0 - z_grid_spacing) - S_init_b(0,0))/z_grid_spacing
 initial_S_bottom_gradient = (S_init_b(0, domain_z) - S_init_b(0, domain_z + z_grid_spacing))/z_grid_spacing
 
 #these two only incoporate constant gradient
 # T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
 # S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
-
 #below incorporates side boundaries as a constant gradient, CANT DO WITH PERIODIC (LAB_SET)
 T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
 S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(S_init_bc), west = ValueBoundaryCondition(S_init_bc))
@@ -563,6 +550,7 @@ max_time_step = 2 * min_time_step_predicted#sets max time step to be 2x the pred
 #this sets a max ∇T time step manaully.  set this to be larger than what you think the time step will be
 #provides the option to use this in determining relaxation rate instead of oscillation time scale --> allows bigger steps than 1/4 oscillation time scale 
 # max_time_step = 0.3 #in seconds
+
 
 #FORCING FUNCTIONS
 #option for no forcing
@@ -597,8 +585,10 @@ S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRel
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation - CURRENTLY TESTING
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing, S_wall_exterior))
@@ -610,28 +600,25 @@ forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_bo
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
 #pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
-
-
-
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
-"""SET UP MODEL"""
+
+
+
 #sets up model
 model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing, boundary_conditions)
 @info "model made"
 #helper functions
 density_operation = seawater_density(model; geopotential_height)
-#rounds number num up to nearest multiple of base
 
-"""SET INITIAL CONDITIONS"""
+
 set!(model, T=T_init, S=S_init, w=w_init)
 ρ_initial = Field(density_operation)
 compute!(ρ_initial)
 @info "initial conditions set"
 
 
-"""SIMULATION SET UP"""
-#FINDING TIME SCALES
+#setting time steps 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 initial_travel_velocity = initial_pipe_velocity # a number just to set an initial time step, determined from initial runs starting around 1ms, was 0.01 first 
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
@@ -643,22 +630,23 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 # initial_pipe_density = getMaskedAverageTracer(pipeMask, ρ_initial)
 # initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
 
-#SETTING TIME STEPS
+
 #for intial time step to be ok, next step need to increase, currently its 500ms, seems to increase)
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 30min
+run_duration = 6hour
+run_duration = 10minute
 
-#IMPLEMENTING SIMULATION
+
+#running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-
-#PROGRESS MESSAGE
+timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step) #TODO: set max delta t?
+simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
-add_callback!(simulation, progress_message, name=:progress_message, IterationInterval(50))
+add_callback!(simulation, progress_message, IterationInterval(50))
 
-#SIMULATION FILE WRITERS
 #fields = Dict("u" => model.velocities.u, "w" => model.velocities.w, "T" => model.tracers.T, "S" => model.tracers.S)
 w = model.velocities.w;
 u = model.velocities.u;
@@ -671,23 +659,7 @@ filename = joinpath("Trials",trial_name)
 #time interval option
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
-
-#TIME STEPPER 
-update_iteration = 4
-timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step) #TODO: set max delta t?
-simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(update_iteration))
-
-# #CALLBACK FOR RELAXATION INTERVAL TO PREVENT LEAKAGE
-# function updateRelaxation()
-    
-# end
-# add_callback!(simulation, updateRelaxation, name=:relaxation_updater, IterationInterval(update_iteration), callsite = )
-
-
-"""RUN SIMULATION"""
 run!(simulation; pickup=false)
-
-
 
 
 
@@ -703,8 +675,6 @@ times = u_t.times
 n = Observable(1)
 Observable(1)
 @info @sprintf("Finished extracting time series. Simulation total run time %.3f seconds | %.3f minutes", times[end], times[end]/minute)
-
-
 uₙ = @lift interior(u_t[$n], :, 1, :)
 wₙ = @lift interior(w_t[$n], :, 1, :)
 ζₙ = @lift interior(ζ_t[$n], :, 1, :)
@@ -712,12 +682,10 @@ Tₙ = @lift interior(T_t[$n], :, 1, :)
 Sₙ = @lift interior(S_t[$n], :, 1, :)
 ρₙ = @lift interior(ρ_t[$n], :, 1, :)
 @info "finished extracting data as arrays"
-
 #how much of data set to plot 
 plot_until_time = -1 #enter -1 to plot whole thing
 lastFrame = getIndexFromTime(plot_until_time, times)
 num_Data_Points = lastFrame
-
 #very inefficient way of getting max/min, need to update
 T_range = getMaxAndMin(num_Data_Points, T_t)
 S_range = getMaxAndMin(num_Data_Points, S_t)
@@ -728,30 +696,24 @@ w_range = getMaxAndMin(num_Data_Points, w_t)
 @info "finished getting max and min of each"
 
 
-
 #making animations 
-
 #properties
 fig = Figure(size=(600, 900))
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
 axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
 fig[1, :] = Label(fig, title)
-
 xT, yT, zT = nodes(T_t[1])
 ax_T = Axis(fig[2, 1]; title="temperature[C]", axis_kwargs...)
 hm_T = heatmap!(ax_T, xT, zT, Tₙ; colorrange=T_range, colormap=:thermal) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[2, 2], hm_T, label="C")
-
 xS, yS, zS = nodes(S_t[1])
 ax_S = Axis(fig[3, 1]; title="salinity[ppt]", axis_kwargs...)
 hm_S = heatmap!(ax_S, xS, zS, Sₙ; colorrange=S_range, colormap=:haline) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[3, 2], hm_S, label="ppt")
-
 xρ, yρ, zρ = nodes(ρ_t[1])
 ax_ρ = Axis(fig[4, 1]; title="potential density[kg/m^3]", axis_kwargs...)
 hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=Reverse(:viridis)) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
-
 fig
 @info "Making properties animation from data"
 frames = 1:lastFrame
@@ -759,57 +721,34 @@ record(fig, filename * "properties.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
-
-
-
 #velocities
 fig = Figure(size=(600, 900))
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
 axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
 fig[1, :] = Label(fig, title)
-
 xw, yw, zw = nodes(w_t[1])
 ax_w = Axis(fig[2, 1]; title="w velocity", axis_kwargs...)
 w_colorbar_range = (-max(abs(w_range[1]), abs(w_range[2])), max(abs(w_range[1]), abs(w_range[2])))
 hm_w = heatmap!(ax_w, xw, zw, wₙ; colorrange=w_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[2, 2], hm_w, label="m/s")
-
 xu, yu, zu = nodes(u_t[1])
 ax_u = Axis(fig[3, 1]; title="u velocity", axis_kwargs...)
 u_colorbar_range = (-max(abs(u_range[1]), abs(u_range[2])), max(abs(u_range[1]), abs(u_range[2])))
 hm_u = heatmap!(ax_u, xu, zu, uₙ; colorrange=u_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[3, 2], hm_u, label="m/s")
-
 xζ, yζ, zζ = nodes(ζ_t[1])
 ax_ζ = Axis(fig[4, 1]; title="vorticity", axis_kwargs...)
 ζ_colorbar_range = (-max(abs(ζ_range[1]), abs(ζ_range[2])), max(abs(ζ_range[1]), abs(ζ_range[2])))
 hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
-
 fig
-
 @info "Making velocities animation from data"
 frames = 1:lastFrame
 record(fig, filename * "velocities.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
-
 @info @sprintf("Done. Simulation total run time %.3f seconds | %.3f minutes", times[end], times[end]/minute)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -839,43 +778,32 @@ end
 # ax_T = Axis(fig[3, 1]; title = "temperature", axis_kwargs...)
 # hm_T = heatmap!(ax_T, xT, zT, Tₙ; colorrange = T_range, colormap = :thermal)
 # Colorbar(fig[3,2], hm_T, label = "C")
-
-
-
-
 #TODO: visualize streamlines & how they change
-
 #visualize distributions
 density_field = Field(density_operation)
 compute!(density_field)
-
 #function takes a model
 function plotInitialConditions(m)
     geopotential_height = 0
     density_operation = density_operation = seawater_density(m; geopotential_height)
     density_field = Field(density_operation)
     compute!(density_field)
-
     fig = Figure()
     title = "initial conditions"
     Label(fig[0, :], title)
     x = xnodes(m.tracers.T)
     z = znodes(m.tracers.T)
-
     axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
-
     ax1 = Axis(fig[1, 1]; title="Temperature (C)", axis_kwargs...)
     T_init_matrix = interior(m.tracers.T, :, 1, :)
     T_lims = (minimum(T_init_matrix), maximum(T_init_matrix));
     hm1 = heatmap!(ax1, x, z, T_init_matrix, colorrange=T_lims, colormap=:thermal, interpolate=true)
     Colorbar(fig[1, 2], hm1)
-
     ax2 = Axis(fig[2, 1]; title="Salinity (ppt)", axis_kwargs...)
     S_init_matrix = interior(m.tracers.S, :, 1, :)
     S_lims = (minimum(S_init_matrix), maximum(S_init_matrix));
     hm2 = heatmap!(ax2, x, z, S_init_matrix, colorrange=S_lims, colormap=:haline, interpolate=true)
     Colorbar(fig[2, 2], hm2)
-
     ax3 = Axis(fig[3, 1]; title="Density (kg/m^3)", axis_kwargs...)
     ρ_init_matrix = interior(density_field, :, 1, :)
     ρ_lims = (minimum(ρ_init_matrix), maximum(ρ_init_matrix));
@@ -883,8 +811,6 @@ function plotInitialConditions(m)
     Colorbar(fig[3, 2], hm3)
     return fig
 end 
-
-
 function plotTracerMask(mask::Function, m)
     fig = Figure()
     title = "tracer mask"
@@ -898,38 +824,31 @@ function plotTracerMask(mask::Function, m)
             maskArray[i, j] = mask(myNodes[1][i], myNodes[3][j])
         end
     end
-
     axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
-
     ax = Axis(fig[1, 1]; title="Temperature (C)", axis_kwargs...)
     lims = (minimum(maskArray), maximum(maskArray));
     hm = heatmap!(ax, x, z, maskArray, colorrange=lims, colormap=:grays, interpolate=true)
     Colorbar(fig[1, 2], hm)
     return fig
 end
-
 #check that model has reset - plot velocities
 fig = Figure()
 title = "initial velocities"
 Label(fig[0, :], title)
 x = xnodes(model.tracers.T)
 z = znodes(model.tracers.T)
-
 ax1 = Axis(fig[2, 1]; title="u velocity (m/s)", axis_kwargs...)
 u_init_matrix = interior(model.velocities.u, :, 1, :)
 u_lims = (minimum(u_init_matrix), maximum(u_init_matrix));
 hm1 = heatmap!(ax1, x, z, u_init_matrix, colorrange=u_lims, colormap=Reverse(:balance), interpolate=true)
 Colorbar(fig[2, 2], hm1)
-
 axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
 ax2 = Axis(fig[1, 1]; title="w velocity (m/s)", axis_kwargs...)
 w_init_matrix = interior(model.velocities.w, :, 1, :)
 w_lims = (minimum(w_init_matrix), maximum(w_init_matrix));
 hm2 = heatmap!(ax2, x, z, w_init_matrix, colorrange=w_lims, colormap=Reverse(:balance), interpolate=true)
 Colorbar(fig[1, 2], hm2)
-
 display(fig)
-
 #plotting streamlines: need to write up an troubleshoot 
 x_spacings = xspacings(domain_grid, Center(), Center(), Center())
 z_spacings = zspacings(domain_grid, Center(), Center(), Center())
@@ -951,14 +870,10 @@ Label(fig[0, :], title)
 ax = Axis(fig[1, 1]; title="streamlines", axis_kwargs...)
 streamplot(streamFunc, 0 .. domain_x, -domain_z .. 0, colormap=:magma)
 fig
-
-
 #TODO: why does it seem to get so high, plot total heat to see if conservative 
-
 #testing
 #setting up pipe
 # domain_arr = nodes(domain_grid, locs; reshape = true)
 # pipe_interior_grid_x = AbstractArray{Float64, 3}
-
 x_spacings = xspacings(domain_grid, Center(), Center(), Center())
 z_spacings = zspacings(domain_grid, Center(), Center(), Center())
