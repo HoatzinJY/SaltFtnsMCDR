@@ -10,6 +10,9 @@ using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
 
+
+"""TODO: NEW GRID SPACING AND MAX TIME STEP WITHOUT WORRYING ABOUT OSCILLATION AND INSTEAD ABOUT BOUNDARY LAYER, 
+PERHAPS SHOULD KEEP CURRENT BECUASE THERE IS OSCILLATION AT THE END"""
 #IF ADD IN MORE TRACERS OR HAVE WALL SPECIFIC ONES, LOOK FOR LINES LABELED TRACER_MIN, need to edit, add function that takes min/max of things
 #to swap between bounded and periodic, look for LAB_SET
 
@@ -168,7 +171,7 @@ wall_material_ρ = 8900#density, in kg/m^3
 wall_material_cₚ = 376.812 #specific heat capacity under constant pressure, J/(kg * K)
 wall_material_k = 50.208#thermal conductivity (W/(mK))
 pipe_data = PipeWallData(wall_material_k/(wall_material_cₚ*wall_material_ρ), pipe_wall_thickness_intended)
-
+@info @sprintf("Wall Material Diffusivity Unscaled: %.3e", pipe_data.wall_thermal_diffusivity)
 
 """MASKING FUNCTIONS"""
 #TODO: these all use a pipe_wall_thickness --> should pass that in instead, since that is calculated during grid making
@@ -286,7 +289,6 @@ function tracerRelaxationMaskStrip(x, y, z)
 end
 tracerRelaxationMask(x, z) = tracerRelaxationMask(x, 0, z)
 tracerRelaxationMaskStrip(x, z) = tracerRelaxationMaskStrip(x, 0, z)
-plotTracerMask(tracerRelaxationMask, model)
 
 """INITIAL CONDITIONS & WATER COLUMN CONDITIONS"""
 #sets initial t and s. Assumes that z will be negative. 
@@ -404,7 +406,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "2D model w salinity pipe WALL exterior mask and WENO"
+trial_name = "2D model with different kappas no wall exterior forcing"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
@@ -487,45 +489,35 @@ tracers = (:T, :S); #temperature, salinity
 
 diffusivity_data = (seawater = seawater_diffusion_data, pipe = pipe_data)
 #TODO: this function uses nonlocal data  #working on the named tuple it should take 
-# function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
-#     if (isPipeWall(x, z) || wall_indicator == "WALL")
-#         return parameters[:pipe].wall_thermal_diffusivity #edit to account for wall thickness
-#     else 
-#         return parameters[:seawater].T.molecular
-#     end
-# end
-#to test, this sets the top half with big diffusivity, bottom half to 0, no wall
+#this function also uses nonlocal data for pipe wall thickness and pipe wall thickness intended
 function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
-    if (z < 9 || wall_indicator == "WALL")
-        return 10 #edit to account for wall thickness
+    if (isPipeWall(x, z) || wall_indicator == "WALL")
+        return parameters[:pipe].wall_thermal_diffusivity * (pipe_wall_thickness/pipe_wall_thickness_intended) #edit to account for wall thickness
     else 
-        return 0
+        return parameters[:seawater].T.molecular
     end
 end
-#to test, with pipe wall, this sets top half pipe wall with big diffusivity, rest normal
-# function tempDiffusivities(x, y, z, parameters::NamedTuple, wall_indicator::String)
-#     if ((isPipeWall(x, z) && z < 9) || wall_indicator == "WALL")
-#         return parameters[:pipe].wall_thermal_diffusivity + 10#edit to account for wall thickness
-#     else 
-#         return parameters[:seawater].T.molecular
-#     end
-# end
-tempDiffusivities(x, z) = tempDiffusivities(x, 0, z, diffusivity_data, "")
-tempDiffusivities(x, y, z) = tempDiffusivities(x, y, z, diffusivity_data, "")
-tempDiffusivities(x, y, z, parameters::NamedTuple) = tempDiffusivities(x, y, z, parameters, "")
-# function saltDiffusivities(x, y, z, my_diffusivity_data :: NamedTuple)
-#     return my_diffusivity_data.seawater.S.molecular
-# end
-# saltDiffusivities(x, z, my_diffusivity_data :: NamedTuple) = saltDiffusivities(x, 0, z, my_diffusivity_data :: NamedTuple)
-#might need a salt diffusivities function if the code wants one- run and see
+tempDiffusivities(x, z, t) = tempDiffusivities(x, y, z, diffusivity_data, "")
+function saltDiffusivities(x, y, z, parameters::NamedTuple)
+    if (isPipeWall(x, z))
+        return 0
+    else 
+        return parameters[:seawater].S.molecular
+    end
+end
+saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, y, z, diffusivity_data)
 horizontal_closure = HorizontalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
 vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 #option for no walls, just molecular diffusivities - TESTED
-closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
+#closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=T_diffusivity.molecular, S=S_diffusivity.molecular)) #this made the diffusion time scale way too long
 #option for eddy diffusivities 
 # closure = (horizontal_closure, vertical_closure)
-#option for walls - currently only thermal
+#option for walls - thermal only
 # closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular))
+#option for walls: thermal and salt
+closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=saltDiffusivities))
+
+
 
 #BOUNDARY CONDITIONS
 #initial gradient dζ/dz, assuming z decreases with depth
@@ -590,9 +582,9 @@ S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRel
 #pipe wall velocities and property sponge layer 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
-#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
-#pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing, S_wall_exterior))
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
+#pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation - CURRENTLY TESTING
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing, S_wall_exterior))
 #pipe wall velocities and property sponge layer, and pipe wall relaxation, and pumping
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, and internal pipe relaxation
@@ -619,13 +611,14 @@ set!(model, T=T_init, S=S_init, w=w_init)
 compute!(ρ_initial)
 @info "initial conditions set"
 
+
 #setting time steps 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 initial_travel_velocity = initial_pipe_velocity # a number just to set an initial time step, determined from initial runs starting around 1ms, was 0.01 first 
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
-diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
+# diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T #TRACER_MIN, set to tracer with biggest kappa, to use when horizontal and vertical diffusivities are used
-# diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
+diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 # surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
 # initial_pipe_density = getMaskedAverageTracer(pipeMask, ρ_initial)
@@ -635,13 +628,14 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
 
 #for intial time step to be ok, next step need to increase, currently its 500ms, seems to increase)
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
-#max time step set during model creation
-simulation_duration = 5day
-run_duration = 30minute
+"""IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
+new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
+simulation_duration = 1day
+run_duration = 1hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = max_time_step) #TODO: set max delta t?
+timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step) #TODO: set max delta t?
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
@@ -655,7 +649,7 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 filename = joinpath("Trials",trial_name)
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(5), overwrite_existing=true) 
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
 # simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(1minute), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
