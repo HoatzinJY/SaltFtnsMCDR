@@ -330,6 +330,10 @@ delta_z = 200;
 function T_init(x, y, z)
     return T_top - ((T_bot - T_top) / delta_z)z
 end
+#this function does not need pipe, just the background profile, which
+function S_init_b(x, y, z)
+    return S_top - ((S_bot - S_top) / delta_z)z
+end
 function S_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
@@ -360,6 +364,7 @@ T_init_bc(z, t) = T_init(0, z)
 T_init_target(x, z, t) = T_init(x, 0, z)
 T_init_target(x, y, z, t) = T_init(x, 0, z)
 S_init(x, z) = S_init(x, 0, z)
+S_init_b(x, z) = S_init_b(x, 0, z)
 S_init_bc(y, z, t) = S_init(0, 0, z)
 S_init_bc(z, t) = S_init(0, z)
 S_init_target(x, z, t) = S_init(x, 0, z)
@@ -403,7 +408,7 @@ function inpenetrable_wall_forcer(x_center, fieldNodes, i, j, k, field, rate)
 end
 
 
-
+#TODO: sepparate initial functions and profile functions 
 
 
 
@@ -412,7 +417,7 @@ trial_name = "2D model with different kappas no wall forcing AT ALL"
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
-surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
+surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init_b) - getBackgroundDensity(-pipe_top_depth, T_init, S_init_b))/pipe_length #takes average for unaltered water column
 oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
@@ -526,8 +531,8 @@ closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, 
 #TODO: use this instead of relaxation to imitate infinite reservoir
 initial_T_top_gradient = (T_init(0,0) - T_init(0, 0 - z_grid_spacing))/z_grid_spacing
 initial_T_bottom_gradient = (T_init(0, domain_z + z_grid_spacing) - T_init(0, domain_z))/z_grid_spacing
-initial_S_top_gradient = (S_init(0, 0 - z_grid_spacing) - S_init(0,0))/z_grid_spacing
-initial_S_bottom_gradient = (S_init(0, domain_z) - S_init(0, domain_z + z_grid_spacing))/z_grid_spacing
+initial_S_top_gradient = (S_init_b(0, 0 - z_grid_spacing) - S_init_b(0,0))/z_grid_spacing
+initial_S_bottom_gradient = (S_init_b(0, domain_z) - S_init_b(0, domain_z + z_grid_spacing))/z_grid_spacing
 
 #these two only incoporate constant gradient
 # T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
@@ -582,9 +587,9 @@ S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRel
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation - CURRENTLY TESTING
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing, S_wall_exterior))
 #pipe wall velocities and property sponge layer, and pipe wall relaxation, and pumping
@@ -633,7 +638,7 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 6hour
+run_duration = 2hour
 
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
