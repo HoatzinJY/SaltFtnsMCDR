@@ -57,6 +57,7 @@ mutable struct DiffusionParameter
     diapycnal::Float64 #vertical
 end
 mutable struct SeawaterDiffusivityData
+    ν :: DiffusionParameter
     T :: DiffusionParameter
     S :: DiffusionParameter
 end
@@ -67,7 +68,7 @@ eddy_vertical_diffusivity = 1e-5
 my_viscosity = DiffusionParameter(1.05e-6, 1e3, 1e-4)
 T_diffusivity = DiffusionParameter(1.46e-7, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
 S_diffusivity = DiffusionParameter(1.3E-9, eddy_horizontal_diffusivity, eddy_vertical_diffusivity )
-seawater_diffusion_data = SeawaterDiffusivityData(T_diffusivity, S_diffusivity)
+seawater_diffusion_data = SeawaterDiffusivityData(my_viscosity, T_diffusivity, S_diffusivity)
 geopotential_height = 0; # sea surface height for potential density calculations
 #useful auxilliary functions
 
@@ -407,13 +408,12 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "test"
+trial_name = "no wall viscosity no side of wall forcing"
 
 
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
-surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length #takes average for unaltered water column
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init_b) - getBackgroundDensity(-pipe_top_depth, T_init, S_init_b))/pipe_length #takes average for unaltered water column
 oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
@@ -510,6 +510,14 @@ function saltDiffusivities(x, y, z, parameters::NamedTuple)
     end
 end
 saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
+function myViscosity(x, y, z, parameters::NamedTuple)
+    if (isPipeWall(x, z))
+        return 0
+    else 
+        return parameters[:seawater].ν.molecular
+    end
+end
+myViscosity(x ,z ,t ) = myViscosity(x, 0, z, diffusivity_data)
 horizontal_closure = HorizontalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.isopycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.isopycnal, S=S_diffusivity.molecular + S_diffusivity.isopycnal)) 
 vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_viscosity.diapycnal, κ=(T=T_diffusivity.molecular + T_diffusivity.diapycnal, S=S_diffusivity.molecular + S_diffusivity.diapycnal)) 
 #option for no walls, just molecular diffusivities - TESTED
@@ -519,8 +527,9 @@ vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_visc
 #option for walls - thermal only
 # closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=S_diffusivity.molecular))
 #option for walls: thermal and salt
-closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=saltDiffusivities))
-
+#closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=saltDiffusivities))
+#option for walls: thermal and salt and viscosity
+closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffusivities))
 
 #BOUNDARY CONDITIONS
 #initial gradient dζ/dz, assuming z decreases with depth
@@ -585,10 +594,9 @@ S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRel
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation - CURRENTLY TESTING
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing, S_wall_exterior))
@@ -625,7 +633,7 @@ initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #TRACER_MIN, set to tracer with biggest kappa
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T #TRACER_MIN, set to tracer with biggest kappa, to use when horizontal and vertical diffusivities are used
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
-viscous_time_scale = (min_grid_spacing^2)/model.closure.ν
+viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0)
 # surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
 # initial_pipe_density = getMaskedAverageTracer(pipeMask, ρ_initial)
 # initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
@@ -636,8 +644,7 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 6hour
-run_duration = 10minute
+run_duration = 40minute
 
 
 #running model
