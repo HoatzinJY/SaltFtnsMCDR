@@ -400,15 +400,16 @@ function inpenetrable_wall_forcer(x_center, fieldNodes, i, j, k, field, rate)
         return @inbounds pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * rate * (field[i - 1, j, k] - field[i, j, k])
     end
 end
-
-
-
+function zero_velocity_forcer_discrete(fieldNodes ,i, j, k, velocity_field, clock)
+    #currently max increase set to 1.01, so i set this to 1.015
+    return @inbounds pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * 1/(1.015 *clock.last_Δt) *(0 - velocity_field[i, j, k])
+end
 #TODO: sepparate initial functions and profile functions 
 
 
 
 """NAME OF TRIAL"""
-trial_name = "no wall viscosity no side of wall forcing"
+trial_name = "no wall viscosity no side of wall forcing with variable relaxation"
 
 
 
@@ -577,7 +578,7 @@ uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
 #sets forcing for salinity inside pipe --> NO LONGER USED, USE WALL FORCING INSTEAD, SEE TRACER FORCING IN WALLS BELOW
-# pipe_damping_rate = 1/max_damping_rate
+# pipe_damping_rate = 1/max_damping_rate 
 # S_pipe = Relaxation(rate = pipe_damping_rate, mask = pipeMask, target = S_init(0, 0, -pipe_bottom_depth))
 #sets initial forcing for velocity while pump driven 
 pump_info = (Δz = height_displaced, wₚ = initial_pipe_velocity, f_rate = 1/max_damping_rate)
@@ -589,12 +590,20 @@ S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters =
 #forces the outside of the pipe immediately to the surrounding to prevent diffusion
 pipe_exterior_damping_rate = 1/max_damping_rate
 S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRelaxationMask, target = S_init_target)
+#test for variable damping range
+velocity_nodes = nodes(domain_grid, (Face(), Face(), Face()); reshape = true)
+u_wall_forcing_func(i, j, k, grid, clock, model_fields) = zero_velocity_forcer_discrete(velocity_nodes, i, j, k, model_fields.u, clock)
+w_wall_forcing_func(i, j, k, grid, clock, model_fields) = zero_velocity_forcer_discrete(velocity_nodes, i, j, k, model_fields.w, clock)
+u_wall_forcing = Forcing(u_wall_forcing_func, discrete_form = true)
+w_wall_forcing = Forcing(w_wall_forcing_func, discrete_form =true)
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+#pipe wall velocities with discret form and adjusted delta t, property sponge layer
+forcing = (u = (u_wall_forcing, uw_border),  w = (w_wall_forcing, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
@@ -644,13 +653,13 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 40minute
+run_duration = 5minute
 
-
+#just changed the timewizard to have max change 1.01, min change 0.8 but steps twice as frequently, to be able to use model last delta t more effectively
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
-timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step) #TODO: set max delta t?
-simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
+timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.01, min_change = 0.8) #TODO: set max delta t?
+simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(2))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
 
