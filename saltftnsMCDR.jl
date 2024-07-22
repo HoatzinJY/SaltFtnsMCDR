@@ -400,6 +400,7 @@ function inpenetrable_wall_forcer(x_center, fieldNodes, i, j, k, field, rate)
         return @inbounds pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * rate * (field[i - 1, j, k] - field[i, j, k])
     end
 end
+#velocity relaxation that tries to set the relaxation rate based on the clocks last delta t 
 function zero_velocity_forcer_discrete(fieldNodes ,i, j, k, velocity_field, clock)
     #currently max increase set to 1.01, so i set this to 1.015
     return @inbounds pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * 1/(1.015 *clock.last_Δt) *(0 - velocity_field[i, j, k])
@@ -603,9 +604,9 @@ w_wall_forcing = Forcing(w_wall_forcing_func, discrete_form =true)
 #pipe wall velocities and property sponge layer 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipe wall velocities with discret form and adjusted delta t, property sponge layer
-forcing = (u = (u_wall_forcing, uw_border),  w = (w_wall_forcing, uw_border), T = T_border, S=S_border)
+#forcing = (u = (u_wall_forcing, uw_border),  w = (w_wall_forcing, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
-#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation - CURRENTLY TESTING
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing, S_wall_exterior))
