@@ -400,17 +400,29 @@ function inpenetrable_wall_forcer(x_center, fieldNodes, i, j, k, field, rate)
         return @inbounds pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * rate * (field[i - 1, j, k] - field[i, j, k])
     end
 end
-#velocity relaxation that tries to set the relaxation rate based on the clocks last delta t 
 function zero_velocity_forcer_discrete(fieldNodes ,i, j, k, velocity_field, clock)
     #currently max increase set to 1.01, so i set this to 1.015
     return @inbounds pipeWallMask(fieldNodes[1][i], fieldNodes[3][k]) * 1/(1.015 *clock.last_Δt) *(0 - velocity_field[i, j, k])
 end
-#TODO: sepparate initial functions and profile functions 
+#TODO: sepparate initial functions and profile functions
+#this is for a callback, but basically behaves like a forcer
+
+#if do in 3d, need to edit function to loop in :z as well
+function zeroOutVelocities(model, params::NamedTuple)
+    for i in eachindex(params.n[1])
+        for j in eachindex(params.n[3])
+            if (isPipeWall(params.n[1][i], params.n[3][j]))
+                model.timestepper.Gⁿ[params.c[1]][i, 1, j] = 0
+                model.timestepper.Gⁿ[params.c[2]][i, 1, j] = 0
+            end
+        end
+    end
+end
 
 
 
 """NAME OF TRIAL"""
-trial_name = "no wall viscosity no side of wall forcing with variable relaxation"
+trial_name = "no wall forcings variable diffusivity zeroVelocity callback"
 
 
 
@@ -599,6 +611,8 @@ u_wall_forcing = Forcing(u_wall_forcing_func, discrete_form = true)
 w_wall_forcing = Forcing(w_wall_forcing_func, discrete_form =true)
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
+#sponge layer only
+forcing = (u = (uw_border),  w = (uw_border), T = T_border, S=S_border)
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
@@ -606,7 +620,7 @@ w_wall_forcing = Forcing(w_wall_forcing_func, discrete_form =true)
 #pipe wall velocities with discret form and adjusted delta t, property sponge layer
 #forcing = (u = (u_wall_forcing, uw_border),  w = (w_wall_forcing, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation - CURRENTLY TESTING
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing, S_wall_exterior))
@@ -653,8 +667,8 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0)
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
-simulation_duration = 1day
-run_duration = 5minute
+simulation_duration = 100minute 
+run_duration = 1hour
 
 #just changed the timewizard to have max change 1.01, min change 0.8 but steps twice as frequently, to be able to use model last delta t more effectively
 #running model
@@ -663,6 +677,10 @@ timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(2))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
+
+#add callback to force wall velocities to 0
+myNodes = nodes(model.velocities.u; reshape = true)
+add_callback!(simulation, zeroOutVelocities, IterationInterval(1), callsite = TendencyCallsite(), parameters = (c = (:u, :w), n = myNodes))
 
 #fields = Dict("u" => model.velocities.u, "w" => model.velocities.w, "T" => model.tracers.T, "S" => model.tracers.S)
 w = model.velocities.w;
