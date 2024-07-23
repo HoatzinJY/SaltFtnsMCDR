@@ -783,7 +783,7 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 5minute
+run_duration = 16hour
 
 #just changed the timewizard to have max change 1.01, min change 0.8 but steps twice as frequently, to be able to use model last delta t more effectively
 #running model
@@ -911,7 +911,7 @@ axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
 fig[1, :] = Label(fig, title)
 xA, yA, zA = nodes(A_t[1])
 ax_A = Axis(fig[2, 1]; title="tracer A", axis_kwargs...)
-A_colorbar_range = (-max(abs(A_range[1]), abs(A_range[2])), max(abs(A_range[1]), abs(A_range[2])))
+A_colorbar_range = (A_range)
 hm_A = heatmap!(ax_A, xA, zA, Aₙ; colorrange=A_colorbar_range, colormap=:matter) 
 Colorbar(fig[2, 2], hm_A, label="amount")
 record(fig, filename * "tracer.mp4", frames, framerate=8) do i
