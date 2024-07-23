@@ -141,7 +141,7 @@ end
 
 """DOMAIN SIZE"""
 scale = 1
-domain_x = 15scale # width, in meters
+domain_x = 10scale # width, in meters
 domain_z = 18scale #height, in meters
 x_center = domain_x / 2;
 
@@ -149,9 +149,10 @@ x_center = domain_x / 2;
 
 """PIPE AND PUMPING PARAMETERS"""
 #TODO: make these a struct 
-pipe_radius = 0.5scale;
+#TODO: currently pipe radius depends on user to choose a nice number that is a scaling of the diameter 
+pipe_radius = 0.25scale;
 pipe_length = 10scale;
-pipe_top_depth = 3scale;
+pipe_top_depth = 4scale;
 pipe_bottom_depth = pipe_top_depth + pipe_length
 pipe_wall_thickness_intended = 0.01scale; #will be rounded up to nearest number of grid cells during grid setup
 #pumping parameters
@@ -189,6 +190,23 @@ function pipeMask(x, z)
     end
 end
 pipeMask(x,y,z) = pipeMask(x, z)
+#sets up side downwelling pipes to be 1/2 the size of the middle one
+function isSidePipe(x, z)
+    if (min(x, domain_x - x) < pipe_radius && ((-pipe_top_depth) > z > (-pipe_bottom_depth)))
+        return true
+    else
+        return false
+    end
+end
+isSidePipe(x, y, z) = isSidePipe(x, z)
+function sidePipeMask(x, z)
+    if (min(x, domain_x - x) < pipe_radius && ((-pipe_top_depth) > z > (-pipe_bottom_depth)))
+        return 1
+    else
+        return 0
+    end
+end
+sidePipeMask(x, y, z) = sidePipeMask(x, z)
 #returns true or false for if coordinate is inside imaginary pipe walls, relies on center grid 
 function isPipeWall(x, z)
     left_wall_range = (x_center - pipe_radius - pipe_wall_thickness) .. (x_center - pipe_radius)
@@ -236,7 +254,7 @@ waterBorderMask(x, y, z) = waterBorderMask(x, z)
 #TODO: change around these constants and see
 #TODO: figure out how toinline functions
 #this function requires the grid to first be processes to give it actual pipe wall width, and for the pipe top depth to be given 
-function tracerRelaxationMask(x, y, z)
+function tracerRelaxationMaskSigmoid(x, y, z)
     #no masking above top of pipe
     if(z > (-pipe_top_depth))
         return 0
@@ -283,8 +301,26 @@ function tracerRelaxationMaskStrip(x, y, z)
         end
     end
 end
-tracerRelaxationMask(x, z) = tracerRelaxationMask(x, 0, z)
+tracerRelaxationMaskSigmoid(x, z) = tracerRelaxationMaskSigmoid(x, 0, z)
 tracerRelaxationMaskStrip(x, z) = tracerRelaxationMaskStrip(x, 0, z)
+#this masks the entire domain minus the top, and minus the very sides 
+function tracerRelaxationMaskDomainOne(x, y, z)
+    #if not pipe wall, pipe, surface, or two sides
+    if (!isPipeWall(x, y, z) && !isInsidePipe(x, y, z) && (z < (-pipe_top_depth)) && !isSidePipe(x, y, z))
+        return 1
+    else
+        return 0
+    end
+end 
+tracerRelaxationMaskDomainOne(x, z) = tracerRelaxationMaskDomainOne(x, 0, z)
+function velocityRelaxationMaskDomainOne(x, y, z)
+    if (!isPipeWall(x, y, z) && !isInsidePipe(x, y, z) && ((-pipe_bottom_depth) < z < (-pipe_top_depth)) && !isSidePipe(x, y, z))
+        return 1
+    else
+        return 0
+    end
+end 
+velocityRelaxationMaskDomainOne(x, z) = velocityRelaxationMaskDomainOne(x, 0, z)
 
 
 
@@ -331,8 +367,11 @@ function S_init_b(x, y, z)
     return S_top - ((S_bot - S_top) / delta_z)z
 end
 function S_init(x, y, z)
+    #if it is in the pipe or the pipe wall, we set it to be equal to the salinity at the bottom
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
+    elseif (isSidePipe(x, z)) #this section looks at if it is in the side "pipes", then we set it equal to the salinity at the top
+        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
     else
         return S_top - ((S_bot - S_top) / delta_z)z
     end
@@ -422,7 +461,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "no wall forcings variable diffusivity zeroVelocity callback"
+trial_name = "double circulation model trial one"
 
 
 
@@ -464,7 +503,7 @@ domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_
 #PERIODIC OPTION
 #domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Periodic, Periodic, Bounded))
 #2d option  
-#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
+domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
 
 
 #MISCELLANEOUS
@@ -550,17 +589,17 @@ closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffu
 #TODO: use this instead of relaxation to imitate infinite reservoir
 initial_T_top_gradient = (T_init(0,0) - T_init(0, 0 - z_grid_spacing))/z_grid_spacing
 initial_T_bottom_gradient = (T_init(0, domain_z + z_grid_spacing) - T_init(0, domain_z))/z_grid_spacing
-initial_S_top_gradient = (S_init(0, 0 - z_grid_spacing) - S_init(0,0))/z_grid_spacing
-initial_S_bottom_gradient = (S_init(0, domain_z) - S_init(0, domain_z + z_grid_spacing))/z_grid_spacing
+initial_S_top_gradient = (S_init_b(0, 0 - z_grid_spacing) - S_init_b(0,0))/z_grid_spacing
+initial_S_bottom_gradient = (S_init_b(0, domain_z) - S_init_b(0, domain_z + z_grid_spacing))/z_grid_spacing
 initial_S_top_gradient = (S_init_b(0, 0 - z_grid_spacing) - S_init_b(0,0))/z_grid_spacing
 initial_S_bottom_gradient = (S_init_b(0, domain_z) - S_init_b(0, domain_z + z_grid_spacing))/z_grid_spacing
 
 #these two only incoporate constant gradient
-# T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
-# S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
+T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
+S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
 #below incorporates side boundaries as a constant gradient, CANT DO WITH PERIODIC (LAB_SET)
-T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
-S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(S_init_bc), west = ValueBoundaryCondition(S_init_bc))
+# T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient), east = ValueBoundaryCondition(T_init_bc), west = ValueBoundaryCondition(T_init_bc))
+# S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient), east = ValueBoundaryCondition(S_init_bc), west = ValueBoundaryCondition(S_init_bc))
 boundary_conditions = (T = T_bcs, S = S_bcs)
 
 
@@ -580,39 +619,45 @@ max_time_step = 2 * min_time_step_predicted#sets max time step to be 2x the pred
 noforcing(x, z, t) = 0
 noforcing(x, y, z, t) = noforcing(x, z, t)
 #sets velocities inside wall to be 0
-max_damping_rate = 1.1*max_time_step #this is the max frequency, eg. can only choose damping timescales bigger  
-u_damping_rate = 1/max_damping_rate #relaxes fields on 0.1 second time scale, should be very high
-w_damping_rate = 1/max_damping_rate #relaxes fields on 0.11 second time 
+max_damping_timescale = 1.1*max_time_step #this is the max frequency, eg. can only choose damping timescales bigger  
+u_damping_rate = 1/max_damping_timescale #relaxes fields on 0.1 second time scale, should be very high
+w_damping_rate = 1/max_damping_timescale #relaxes fields on 0.11 second time 
 u_pipe_wall = Relaxation(rate = u_damping_rate, mask = pipeWallMask)
 w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
 #sets sponge layer for parameters on all water borders
-border_damping_rate = 1/max_damping_rate
+border_damping_rate = 1/max_damping_timescale
 uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
 T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
 S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
 #sets forcing for salinity inside pipe --> NO LONGER USED, USE WALL FORCING INSTEAD, SEE TRACER FORCING IN WALLS BELOW
-# pipe_damping_rate = 1/max_damping_rate 
+# pipe_damping_rate = 1/max_damping_timescale 
 # S_pipe = Relaxation(rate = pipe_damping_rate, mask = pipeMask, target = S_init(0, 0, -pipe_bottom_depth))
 #sets initial forcing for velocity while pump driven 
-pump_info = (Δz = height_displaced, wₚ = initial_pipe_velocity, f_rate = 1/max_damping_rate)
+pump_info = (Δz = height_displaced, wₚ = initial_pipe_velocity, f_rate = 1/max_damping_timescale)
 w_pump_forcing = Forcing(w_pump, parameters = pump_info, field_dependencies = :w)
 #sets tracer in walls to be forced to that immediately inside pipe
 tracer_field_nodes = nodes(domain_grid,(Center(), Center(), Center()); reshape = true)
 S_wall_forcing_func(i, j, k, grid, clock, model_fields, rate) = inpenetrable_wall_forcer(x_center, tracer_field_nodes, i, j, k, model_fields.S, rate)
-S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters = 1/max_damping_rate)
+S_wall_forcing = Forcing(S_wall_forcing_func, discrete_form = true, parameters = 1/max_damping_timescale)
 #forces the outside of the pipe immediately to the surrounding to prevent diffusion
-pipe_exterior_damping_rate = 1/max_damping_rate
-S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRelaxationMask, target = S_init_target)
+pipe_exterior_damping_rate = 1/max_damping_timescale
+S_wall_exterior = Relaxation(rate = pipe_exterior_damping_rate, mask = tracerRelaxationMaskSigmoid, target = S_init_target)
 #test for variable damping range
 velocity_nodes = nodes(domain_grid, (Face(), Face(), Face()); reshape = true)
 u_wall_forcing_func(i, j, k, grid, clock, model_fields) = zero_velocity_forcer_discrete(velocity_nodes, i, j, k, model_fields.u, clock)
 w_wall_forcing_func(i, j, k, grid, clock, model_fields) = zero_velocity_forcer_discrete(velocity_nodes, i, j, k, model_fields.w, clock)
 u_wall_forcing = Forcing(u_wall_forcing_func, discrete_form = true)
 w_wall_forcing = Forcing(w_wall_forcing_func, discrete_form =true)
+#a whole forcing system for this weird domain setup 
+domain_rate = 1/max_damping_timescale
+T_domain = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainOne, target = T_init_target)
+S_domain = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainOne, target = S_init_target)
+S_sides = Relaxation(rate = domain_rate, mask = sidePipeMask, target = S_init_b(1, 1, -pipe_top_depth))
+uw_domain = Relaxation(rate = domain_rate, mask = velocityRelaxationMaskDomainOne)
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 #sponge layer only
-forcing = (u = (uw_border),  w = (uw_border), T = T_border, S=S_border)
+#forcing = (u = (uw_border),  w = (uw_border), T = T_border, S=S_border)
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
@@ -632,6 +677,8 @@ forcing = (u = (uw_border),  w = (uw_border), T = T_border, S=S_border)
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
 #pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
+#domain forcing with two side tubes 
+forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain), S=(S_domain, S_sides))
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
@@ -647,6 +694,7 @@ density_operation = seawater_density(model; geopotential_height)
 set!(model, T=T_init, S=S_init, w=w_init)
 ρ_initial = Field(density_operation)
 compute!(ρ_initial)
+plotInitialConditions(model)
 @info "initial conditions set"
 
 
@@ -658,7 +706,7 @@ initial_advection_time_scale = min_grid_spacing/initial_travel_velocity
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure[1].κ.T #TRACER_MIN, set to tracer with biggest kappa, to use when horizontal and vertical diffusivities are used
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0)
-# surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init) - getBackgroundDensity(-pipe_top_depth, T_init, S_init))/pipe_length#takes average for unaltered water column
+# surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init_b) - getBackgroundDensity(-pipe_top_depth, T_init, S_init_b))/pipe_length#takes average for unaltered water column
 # initial_pipe_density = getMaskedAverageTracer(pipeMask, ρ_initial)
 # initial_oscillation_period = 2π/sqrt((g/initial_pipe_density) * surrounding_density_gradient) #this is more accurate than it needs to be, can replace initial pipe density with 1000
 
@@ -668,19 +716,19 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 100minute 
-run_duration = 1hour
+run_duration = 15minute
 
 #just changed the timewizard to have max change 1.01, min change 0.8 but steps twice as frequently, to be able to use model last delta t more effectively
 #running model
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
 timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.01, min_change = 0.8) #TODO: set max delta t?
-simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(2))
+simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
 
 #add callback to force wall velocities to 0
 myNodes = nodes(model.velocities.u; reshape = true)
-add_callback!(simulation, zeroOutVelocities, IterationInterval(1), callsite = TendencyCallsite(), parameters = (c = (:u, :w), n = myNodes))
+#add_callback!(simulation, zeroOutVelocities, IterationInterval(1), callsite = TendencyCallsite(), parameters = (c = (:u, :w), n = myNodes))
 
 #fields = Dict("u" => model.velocities.u, "w" => model.velocities.w, "T" => model.tracers.T, "S" => model.tracers.S)
 w = model.velocities.w;
@@ -690,9 +738,9 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 filename = joinpath("Trials",trial_name)
-#simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true) #can also set to TimeInterval
+#simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 run!(simulation; pickup=false)
 
