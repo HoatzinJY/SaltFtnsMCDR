@@ -467,6 +467,15 @@ function w_init(x, y, z)
 end
 w_init(x, z) = w_init(x, 0, z)
 #TODO: get a word for "general water column"  
+function A_init(x, y, z)
+    if(z < -pipe_bottom_depth)
+        return 1
+    else
+        return 0
+    end
+end 
+A_init(x, z) = A_init(x, 0, z)
+
 """FORCING FUNCTIONS"""
 # #TODO: test this 
 function w_pump(x, y, z, t, w, p)
@@ -514,7 +523,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "double cell long run with stratified profile and more limited top forcing"
+trial_name = "TRACER double cell long run with stratified profile and more limited top forcing"
 
 
 
@@ -596,7 +605,7 @@ advection = WENO(); #will be smooth, and mimic more diffusion, default is 5th or
 
 
 #TRACERS & DIFFUSION CLOSURES
-tracers = (:T, :S); #temperature, salinity
+tracers = (:T, :S, :A); #temperature, salinity
 """IMPORTANT: order of definition of kappas matter,must define in same order as tracer statement even though finding it later works""";
 diffusivity_data = (seawater = seawater_diffusion_data, pipe = pipe_data)
 #TODO: this function uses nonlocal data  #working on the named tuple it should take 
@@ -636,7 +645,7 @@ vertical_closure = VerticalScalarDiffusivity(ν=my_viscosity.molecular + my_visc
 #option for walls: thermal and salt
 #closure = ScalarDiffusivity(ν=my_viscosity.molecular, κ=(T=tempDiffusivities, S=saltDiffusivities))
 #option for walls: thermal and salt and viscosity
-closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffusivities))
+closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffusivities, A = 0))
 
 #BOUNDARY CONDITIONS
 #initial gradient dζ/dz, assuming z decreases with depth
@@ -750,7 +759,7 @@ model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, trac
 density_operation = seawater_density(model; geopotential_height)
 
 
-set!(model, T=T_init, S=S_init, w=w_init)
+set!(model, T=T_init, S=S_init, w=w_init, A = A_init)
 ρ_initial = Field(density_operation)
 compute!(ρ_initial)
 @info "initial conditions set"
@@ -774,7 +783,7 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 16hour
+run_duration = 5minute
 
 #just changed the timewizard to have max change 1.01, min change 0.8 but steps twice as frequently, to be able to use model last delta t more effectively
 #running model
@@ -795,10 +804,11 @@ T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
+A = model.tracers.A
 filename = joinpath("Trials",trial_name)
 #simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(5), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A); filename, schedule=TimeInterval(5), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 run!(simulation; pickup=false)
 
@@ -812,6 +822,7 @@ w_t = FieldTimeSeries(output_filename, "w")
 T_t = FieldTimeSeries(output_filename, "T")
 S_t = FieldTimeSeries(output_filename, "S")
 ρ_t = FieldTimeSeries(output_filename, "ρ")
+A_t = FieldTimeSeries(output_filename, "A")
 times = u_t.times
 n = Observable(1)
 Observable(1)
@@ -822,6 +833,7 @@ wₙ = @lift interior(w_t[$n], :, 1, :)
 Tₙ = @lift interior(T_t[$n], :, 1, :)
 Sₙ = @lift interior(S_t[$n], :, 1, :)
 ρₙ = @lift interior(ρ_t[$n], :, 1, :)
+Aₙ = @lift interior(A_t[$n], :, 1, :)
 @info "finished extracting data as arrays"
 #how much of data set to plot 
 plot_until_time = -1 #enter -1 to plot whole thing
@@ -834,6 +846,7 @@ u_range = getMaxAndMin(num_Data_Points, u_t)
 w_range = getMaxAndMin(num_Data_Points, w_t)
 ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
 ζ_range = getMaxAndMin(num_Data_Points, ζ_t)
+A_range = getMaxAndMin(num_Data_Points, A_t)
 @info "finished getting max and min of each"
 
 
@@ -862,6 +875,7 @@ record(fig, filename * "properties.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
+
 #velocities
 fig = Figure(size=(600, 900))
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
@@ -886,6 +900,21 @@ fig
 @info "Making velocities animation from data"
 frames = 1:lastFrame
 record(fig, filename * "velocities.mp4", frames, framerate=8) do i
+    @info string("Plotting frame ", i, " of ", frames[end])
+    n[] = i
+end
+
+#other tracer
+fig = Figure(size=(600, 300))
+title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
+axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
+fig[1, :] = Label(fig, title)
+xA, yA, zA = nodes(A_t[1])
+ax_A = Axis(fig[2, 1]; title="tracer A", axis_kwargs...)
+A_colorbar_range = (-max(abs(A_range[1]), abs(A_range[2])), max(abs(A_range[1]), abs(A_range[2])))
+hm_A = heatmap!(ax_A, xA, zA, Aₙ; colorrange=A_colorbar_range, colormap=:matter) 
+Colorbar(fig[2, 2], hm_A, label="amount")
+record(fig, filename * "tracer.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
@@ -929,7 +958,7 @@ function plotInitialConditions(m)
     density_operation = density_operation = seawater_density(m; geopotential_height)
     density_field = Field(density_operation)
     compute!(density_field)
-    fig = Figure()
+    fig = Figure(size=(600, 800))
     title = "initial conditions"
     Label(fig[0, :], title)
     x = xnodes(m.tracers.T)
@@ -950,6 +979,11 @@ function plotInitialConditions(m)
     ρ_lims = (minimum(ρ_init_matrix), maximum(ρ_init_matrix));
     hm3 = heatmap!(ax3, x, z, ρ_init_matrix, colorrange=ρ_lims, colormap=Reverse(:viridis), interpolate=true)
     Colorbar(fig[3, 2], hm3)
+    ax4 = Axis(fig[4, 1]; title="Tracer", axis_kwargs...)
+    A_init_matrix = interior(m.tracers.A, :, 1, :)
+    A_lims = (minimum(A_init_matrix), maximum(A_init_matrix));
+    hm4 = heatmap!(ax4, x, z, A_init_matrix, colorrange=A_lims, colormap=:matter, interpolate=true)
+    Colorbar(fig[4, 2], hm4)
     return fig
 end 
 function plotTracerMask(mask::Function, m)
