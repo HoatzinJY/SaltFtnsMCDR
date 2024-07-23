@@ -335,7 +335,19 @@ function velocityRelaxationMaskDomainOne(x, y, z)
     end
 end 
 velocityRelaxationMaskDomainOne(x, z) = velocityRelaxationMaskDomainOne(x, 0, z)
+#a relatively "slow" mask to simulate an infinite reservoir 
+function topAndBottomRelaxationMask(x, y, z)
+    if(z > (-pipe_top_depth + 0.1pipe_top_depth))
+        return (0.1/(0.9*pipe_top_depth))*z + 0.1
+    elseif(z < (-pipe_bottom_depth - 0.1 * abs(domain_z - pipe_bottom_depth)))
+        return (0.1/(0.9*(domain_z - pipe_bottom_depth)))*(-z - pipe_bottom_depth - (0.1*(domain_z - pipe_bottom_depth)))
+    else
+        return 0
+    end
+end
+topAndBottomRelaxationMask(x, z) = topAndBottomRelaxationMask(x, 0, z)
 
+        
 
 """INITIAL CONDITIONS & WATER COLUMN CONDITIONS"""
 #sets initial t and s. Assumes that z will be negative. 
@@ -383,8 +395,8 @@ function S_init(x, y, z)
     #if it is in the pipe or the pipe wall, we set it to be equal to the salinity at the bottom
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
-    elseif (isSidePipe(x, z)) #this section looks at if it is in the side "pipes", then we set it equal to the salinity at the top
-        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
+    # elseif (isSidePipe(x, z)) #this section looks at if it is in the side "pipes", then we set it equal to the salinity at the top
+    #     return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
     else
         return S_top - ((S_bot - S_top) / delta_z)z
     end
@@ -474,7 +486,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "10 thick wall test with no wall interior or exterior forcing accurate diffusivity"
+trial_name = "10 thick wall test with no wall intext forcing top and bottom tracer relaxation"
 
 
 
@@ -643,6 +655,8 @@ border_damping_rate = 1/max_damping_timescale
 uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
 T_border = Relaxation(rate = border_damping_rate, mask = borderMask, target = T_init_target) #these two are edited to be the whole border now
 S_border = Relaxation(rate = border_damping_rate, mask = borderMask, target = S_init_target)
+T_tb = Relaxation(rate = border_damping_rate, mask = topAndBottomRelaxationMask, target = T_init_target)
+S_tb = Relaxation(rate = border_damping_rate, mask = topAndBottomRelaxationMask, target = T_init_target)
 # T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
 # S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
 #sets forcing for salinity inside pipe --> NO LONGER USED, USE WALL FORCING INSTEAD, SEE TRACER FORCING IN WALLS BELOW
@@ -677,7 +691,9 @@ uw_domain = Relaxation(rate = domain_rate, mask = velocityRelaxationMaskDomainOn
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+#pipewall velocities, property sponge layer and extended sponge on top and bottom
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = (T_border, T_tb), S=(S_border, S_tb))
 #pipe wall velocities with discret form and adjusted delta t, property sponge layer
 #forcing = (u = (u_wall_forcing, uw_border),  w = (w_wall_forcing, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
@@ -710,7 +726,6 @@ density_operation = seawater_density(model; geopotential_height)
 set!(model, T=T_init, S=S_init, w=w_init)
 ρ_initial = Field(density_operation)
 compute!(ρ_initial)
-plotInitialConditions(model)
 @info "initial conditions set"
 
 
@@ -732,7 +747,7 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 100minute 
-run_duration = 15minute
+run_duration = 2hour
 
 #just changed the timewizard to have max change 1.01, min change 0.8 but steps twice as frequently, to be able to use model last delta t more effectively
 #running model
@@ -754,9 +769,9 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 filename = joinpath("Trials",trial_name)
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
+#simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
-#simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(10), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=TimeInterval(5), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 run!(simulation; pickup=false)
 
