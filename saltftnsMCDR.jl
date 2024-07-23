@@ -142,8 +142,8 @@ end
 
 """DOMAIN SIZE"""
 scale = 1
-domain_x = 10scale # width, in meters
-domain_z = 18scale #height, in meters
+domain_x = 20scale # width, in meters
+domain_z = 20scale #height, in meters
 x_center = domain_x / 2;
 
 
@@ -318,10 +318,11 @@ tracerRelaxationMaskDomainOne(x, z) = tracerRelaxationMaskDomainOne(x, 0, z)
 #this one includes a top gradient mask
 function tracerRelaxationMaskDomainTwo(x, y, z)
     #if not pipe wall, pipe, surface, or two sides
+    unmasked_ratio = 0.4
     if (!isPipeWall(x, y, z) && !isInsidePipe(x, y, z) && (z < (-pipe_top_depth)) && !isSidePipe(x, y, z))
         return 1
-    elseif (z > (-pipe_top_depth + 0.1pipe_top_depth))
-        return (0.5/(0.9*pipe_top_depth))*z + 0.5
+    elseif (z > (-pipe_top_depth + unmasked_ratio * pipe_top_depth))
+        return (0.5/((1 - unmasked_ratio)*pipe_top_depth))*z + 0.5
     else
         return 0
     end
@@ -385,20 +386,46 @@ delta_z = 200;
 #TODO: test these initial conditions
 #assuming having equalized temperature, steady state
 function T_init(x, y, z)
-    return T_top - ((T_bot - T_top) / delta_z)z
-end
-#this function does not need pipe, just the background profile, which
-function S_init_b(x, y, z)
-    return S_top - ((S_bot - S_top) / delta_z)z
+    if (z > -pipe_top_depth)
+        return T_top - ((T_bot - T_top) / delta_z)*(-pipe_top_depth)
+    elseif (z < -pipe_bottom_depth)
+        return T_top - ((T_bot - T_top) / delta_z)*(-pipe_bottom_depth)
+    else
+        return T_top - ((T_bot - T_top) / delta_z)z
+    end
 end
 function S_init(x, y, z)
     #if it is in the pipe or the pipe wall, we set it to be equal to the salinity at the bottom
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
-    # elseif (isSidePipe(x, z)) #this section looks at if it is in the side "pipes", then we set it equal to the salinity at the top
-    #     return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
+    elseif (isSidePipe(x, z)) #this section looks at if it is in the side "pipes", then we set it equal to the salinity at the top
+        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
+    elseif (z > -pipe_top_depth)
+        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
+    elseif (z < -pipe_bottom_depth)
+        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
     else
         return S_top - ((S_bot - S_top) / delta_z)z
+    end
+end
+#for just background
+#this function does not need pipe, just the background profile, which
+function S_init_b(x, y, z)
+    if (z > -pipe_top_depth)
+        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
+    elseif (z < -pipe_bottom_depth)
+        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
+    else
+        return S_top - ((S_bot - S_top) / delta_z)z
+    end
+end
+function T_init_b(x, y, z)
+    if (z > -pipe_top_depth)
+        return T_top - ((T_bot - T_top) / delta_z)*(-pipe_top_depth)
+    elseif (z < -pipe_bottom_depth)
+        return T_top - ((T_bot - T_top) / delta_z)*(-pipe_bottom_depth)
+    else
+        return T_top - ((T_bot - T_top) / delta_z)z
     end
 end
 #assuming not having equalized temperatures, but salinity equal to bottom
@@ -425,6 +452,7 @@ T_init_target(x, z, t) = T_init(x, 0, z)
 T_init_target(x, y, z, t) = T_init(x, 0, z)
 S_init(x, z) = S_init(x, 0, z)
 S_init_b(x, z) = S_init_b(x, 0, z)
+T_init_b(x, z) = T_init_b(x, 0, z)
 S_init_bc(y, z, t) = S_init(0, 0, z)
 S_init_bc(z, t) = S_init(0, z)
 S_init_target(x, z, t) = S_init(x, 0, z)
@@ -486,13 +514,13 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "10 thick wall test with no wall intext forcing top and bottom tracer relaxation"
+trial_name = "double cell long run with stratified profile and more limited top forcing"
 
 
 
 """SET UP MODEL COMPONENTS"""
 #calculating max allowed spacing
-surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init, S_init_b) - getBackgroundDensity(-pipe_top_depth, T_init, S_init_b))/pipe_length #takes average for unaltered water column
+surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, T_init_b, S_init_b) - getBackgroundDensity(-pipe_top_depth, T_init_b, S_init_b))/pipe_length #takes average for unaltered water column across the pipe (NOT DOMAIN!)
 oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
@@ -515,8 +543,8 @@ z_res = floor(Int, domain_z / z_grid_spacing);
 #"flat" dimension domain size
 domain_y = y_res * y_grid_spacing
 #miscellaneous
-#pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
-pipe_wall_thickness = roundUpWallThick(pipe_wall_thickness_intended, x_grid_spacing, 10)
+pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
+#pipe_wall_thickness = roundUpWallThick(pipe_wall_thickness_intended, x_grid_spacing, 10)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
@@ -613,12 +641,11 @@ closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffu
 #BOUNDARY CONDITIONS
 #initial gradient dζ/dz, assuming z decreases with depth
 #TODO: use this instead of relaxation to imitate infinite reservoir
-initial_T_top_gradient = (T_init(0,0) - T_init(0, 0 - z_grid_spacing))/z_grid_spacing
-initial_T_bottom_gradient = (T_init(0, domain_z + z_grid_spacing) - T_init(0, domain_z))/z_grid_spacing
+initial_T_top_gradient = (T_init_b(0,0) - T_init_b(0, 0 - z_grid_spacing))/z_grid_spacing
+initial_T_bottom_gradient = (T_init_b(0, domain_z + z_grid_spacing) - T_init_b(0, domain_z))/z_grid_spacing
 initial_S_top_gradient = (S_init_b(0, 0 - z_grid_spacing) - S_init_b(0,0))/z_grid_spacing
 initial_S_bottom_gradient = (S_init_b(0, domain_z) - S_init_b(0, domain_z + z_grid_spacing))/z_grid_spacing
-initial_S_top_gradient = (S_init_b(0, 0 - z_grid_spacing) - S_init_b(0,0))/z_grid_spacing
-initial_S_bottom_gradient = (S_init_b(0, domain_z) - S_init_b(0, domain_z + z_grid_spacing))/z_grid_spacing
+
 
 #these two only incoporate constant gradient
 T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
@@ -693,7 +720,7 @@ uw_domain = Relaxation(rate = domain_rate, mask = velocityRelaxationMaskDomainOn
 #pipe wall velocities and property sponge layer 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipewall velocities, property sponge layer and extended sponge on top and bottom
-forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = (T_border, T_tb), S=(S_border, S_tb))
+#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = (T_border, T_tb), S=(S_border, S_tb))
 #pipe wall velocities with discret form and adjusted delta t, property sponge layer
 #forcing = (u = (u_wall_forcing, uw_border),  w = (w_wall_forcing, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
@@ -710,7 +737,7 @@ forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = (T_b
 #pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
 #domain forcing with two side tubes 
-#forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain), S=(S_domain, S_sides))
+forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain), S=(S_domain, S_sides))
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
@@ -746,8 +773,8 @@ viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0)
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
-simulation_duration = 100minute 
-run_duration = 2hour
+simulation_duration = 1day
+run_duration = 16hour
 
 #just changed the timewizard to have max change 1.01, min change 0.8 but steps twice as frequently, to be able to use model last delta t more effectively
 #running model
@@ -927,7 +954,7 @@ function plotInitialConditions(m)
 end 
 function plotTracerMask(mask::Function, m)
     fig = Figure()
-    title = "tracer mask"
+    title = "tracer mask for "*String(Symbol(mask))
     Label(fig[0, :], title)
     x = xnodes(m.tracers.T)
     z = znodes(m.tracers.T)
@@ -939,7 +966,7 @@ function plotTracerMask(mask::Function, m)
         end
     end
     axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
-    ax = Axis(fig[1, 1]; title="Temperature (C)", axis_kwargs...)
+    ax = Axis(fig[1, 1]; title="Mask Intensity", axis_kwargs...)
     lims = (minimum(maskArray), maximum(maskArray));
     hm = heatmap!(ax, x, z, maskArray, colorrange=lims, colormap=:grays, interpolate=true)
     Colorbar(fig[1, 2], hm)
@@ -991,3 +1018,9 @@ fig
 # pipe_interior_grid_x = AbstractArray{Float64, 3}
 x_spacings = xspacings(domain_grid, Center(), Center(), Center())
 z_spacings = zspacings(domain_grid, Center(), Center(), Center())
+
+plotInitialConditions(model)
+plotTracerMask(tracerRelaxationMaskDomainTwo, model)
+plotTracerMask(velocityRelaxationMaskDomainOne, model)
+plotTracerMask(pipeWallMask, model)
+plotTracerMask(sidePipeMask, model)
