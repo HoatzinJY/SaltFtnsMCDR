@@ -76,6 +76,7 @@ geopotential_height = 0; # sea surface height for potential density calculations
 
 """COMPUTATIONAL FUNCTIONS"""
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
+roundUpWallThick(num::Float64, base, minNum) = max(ceil(Int, num / base) * base, minNum * base) #roudns up, with mininum number of cellsbeing minnum
 findNearest(A::AbstractArray, x) = findmin(abs(A-x)) # returns [nearest value, value index]
 sigmoid(var, center, steepness) = 1/(1 + exp(-(var - center)/steepness))
 xFlippedSigmoid(var, center, steepness) = 1/(1 + exp((var - center)/steepness))
@@ -234,7 +235,8 @@ end
 noMask(x, y, z) = noMask(x, z)
 #border sponge layer 
 function borderMask(x, z)
-        if(min(x, domain_x - x) < x_grid_spacing || min(-z, domain_z + z) < z_grid_spacing)
+    thickness = 5
+        if(min(x, domain_x - x) < thickness*x_grid_spacing || min(-z, domain_z + z) < thickness*z_grid_spacing)
             return 1
         else
             return 0
@@ -472,7 +474,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "double circulation model trial two with surface relaxer"
+trial_name = "10 thick wall test with no wall interior or exterior forcing accurate diffusivity"
 
 
 
@@ -501,7 +503,8 @@ z_res = floor(Int, domain_z / z_grid_spacing);
 #"flat" dimension domain size
 domain_y = y_res * y_grid_spacing
 #miscellaneous
-pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
+#pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
+pipe_wall_thickness = roundUpWallThick(pipe_wall_thickness_intended, x_grid_spacing, 10)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
@@ -510,7 +513,7 @@ pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 #3d option (4 cell) 
 #domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Bounded, Periodic, Bounded))
 #2d option  
-domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
+#domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Bounded, Flat, Bounded))
 #PERIODIC OPTION
 #domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, y_res, z_res), x=(0, domain_x), y = (0, domain_y), z=(-domain_z, 0), topology=(Periodic, Periodic, Bounded))
 #2d option  
@@ -638,8 +641,10 @@ w_pipe_wall = Relaxation(rate = w_damping_rate, mask = pipeWallMask)
 #sets sponge layer for parameters on all water borders
 border_damping_rate = 1/max_damping_timescale
 uw_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask)
-T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
-S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
+T_border = Relaxation(rate = border_damping_rate, mask = borderMask, target = T_init_target) #these two are edited to be the whole border now
+S_border = Relaxation(rate = border_damping_rate, mask = borderMask, target = S_init_target)
+# T_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = T_init_target)
+# S_border = Relaxation(rate = border_damping_rate, mask = waterBorderMask, target = S_init_target)
 #sets forcing for salinity inside pipe --> NO LONGER USED, USE WALL FORCING INSTEAD, SEE TRACER FORCING IN WALLS BELOW
 # pipe_damping_rate = 1/max_damping_timescale 
 # S_pipe = Relaxation(rate = pipe_damping_rate, mask = pipeMask, target = S_init(0, 0, -pipe_bottom_depth))
@@ -672,7 +677,7 @@ uw_domain = Relaxation(rate = domain_rate, mask = velocityRelaxationMaskDomainOn
 # pipe wall velocities only 
 # forcing = (u = u_pipe_wall,  w = w_pipe_wall, T = noforcing, S = noforcing)
 #pipe wall velocities and property sponge layer 
-#forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
+forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=S_border)
 #pipe wall velocities with discret form and adjusted delta t, property sponge layer
 #forcing = (u = (u_wall_forcing, uw_border),  w = (w_wall_forcing, uw_border), T = T_border, S=S_border)
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
@@ -689,7 +694,7 @@ uw_domain = Relaxation(rate = domain_rate, mask = velocityRelaxationMaskDomainOn
 #pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
 #domain forcing with two side tubes 
-forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain), S=(S_domain, S_sides))
+#forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain), S=(S_domain, S_sides))
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
