@@ -313,6 +313,18 @@ function tracerRelaxationMaskDomainOne(x, y, z)
     end
 end 
 tracerRelaxationMaskDomainOne(x, z) = tracerRelaxationMaskDomainOne(x, 0, z)
+#this one includes a top gradient mask
+function tracerRelaxationMaskDomainTwo(x, y, z)
+    #if not pipe wall, pipe, surface, or two sides
+    if (!isPipeWall(x, y, z) && !isInsidePipe(x, y, z) && (z < (-pipe_top_depth)) && !isSidePipe(x, y, z))
+        return 1
+    elseif (z > (-pipe_top_depth + 0.1pipe_top_depth))
+        return (0.5/(0.9*pipe_top_depth))*z + 0.5
+    else
+        return 0
+    end
+end
+tracerRelaxationMaskDomainTwo(x, z) = tracerRelaxationMaskDomainTwo(x, 0, z)
 function velocityRelaxationMaskDomainOne(x, y, z)
     if (!isPipeWall(x, y, z) && !isInsidePipe(x, y, z) && ((-pipe_bottom_depth) < z < (-pipe_top_depth)) && !isSidePipe(x, y, z))
         return 1
@@ -321,7 +333,6 @@ function velocityRelaxationMaskDomainOne(x, y, z)
     end
 end 
 velocityRelaxationMaskDomainOne(x, z) = velocityRelaxationMaskDomainOne(x, 0, z)
-
 
 
 """INITIAL CONDITIONS & WATER COLUMN CONDITIONS"""
@@ -461,7 +472,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "double circulation model trial one"
+trial_name = "double circulation model trial two with surface relaxer"
 
 
 
@@ -650,8 +661,8 @@ u_wall_forcing = Forcing(u_wall_forcing_func, discrete_form = true)
 w_wall_forcing = Forcing(w_wall_forcing_func, discrete_form =true)
 #a whole forcing system for this weird domain setup 
 domain_rate = 1/max_damping_timescale
-T_domain = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainOne, target = T_init_target)
-S_domain = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainOne, target = S_init_target)
+T_domain = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainTwo, target = T_init_target)
+S_domain = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainTwo, target = S_init_target)
 S_sides = Relaxation(rate = domain_rate, mask = sidePipeMask, target = S_init_b(1, 1, -pipe_top_depth))
 uw_domain = Relaxation(rate = domain_rate, mask = velocityRelaxationMaskDomainOne)
 #no forcing
@@ -667,7 +678,7 @@ uw_domain = Relaxation(rate = domain_rate, mask = velocityRelaxationMaskDomainOn
 #pipe wall velocities and property sponge layer, and pipe wall relaxation - LATEST TESTED 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing))
-#pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation - CURRENTLY TESTING
+#pipe wall velocities and property sponge layer, pipe wall relaxation, exterior pipe relaxation
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border), T = T_border, S=(S_border, S_wall_forcing, S_wall_exterior))
 #pipe wall velocities and property sponge layer, and pipe wall relaxation, and pumping
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_wall_forcing))
