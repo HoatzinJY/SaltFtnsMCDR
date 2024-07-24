@@ -347,7 +347,20 @@ function topAndBottomRelaxationMask(x, y, z)
     end
 end
 topAndBottomRelaxationMask(x, z) = topAndBottomRelaxationMask(x, 0, z)
-
+#as per the scheme drawn for the thick pipe 
+function tracerRelaxationMaskDomainThree(x, y, z)
+    unmasked_ratio = 0.4
+    if (min(x, domain_x - x) < (domain_z/2) - pipe_radius - pipe_wall_thickness - (pipe_length/10))
+        return 1
+    elseif (z > (-pipe_top_depth + unmasked_ratio * pipe_top_depth))
+        return (0.5/((1 - unmasked_ratio)*pipe_top_depth))*z + 0.5
+    elseif (z < (-pipe_bottom_depth - unmasked_ratio * abs(domain_z - pipe_bottom_depth)))
+        return (0.5/((1 - unmasked_ratio)*(domain_z - pipe_bottom_depth)))*(-z - pipe_bottom_depth - ((1 - unmasked_ratio)*(domain_z - pipe_bottom_depth)))
+    else
+        return 0
+    end
+end
+tracerRelaxationMaskDomainThree(x, z) = tracerRelaxationMaskDomainThree(x, 0, z)
         
 
 """INITIAL CONDITIONS & WATER COLUMN CONDITIONS"""
@@ -398,8 +411,8 @@ function S_init(x, y, z)
     #if it is in the pipe or the pipe wall, we set it to be equal to the salinity at the bottom
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
-    elseif (isSidePipe(x, z)) #this section looks at if it is in the side "pipes", then we set it equal to the salinity at the top
-        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
+    # elseif (isSidePipe(x, z)) #this section looks at if it is in the side "pipes", then we set it equal to the salinity at the top
+    #     return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
     elseif (z > -pipe_top_depth)
         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
     elseif (z < -pipe_bottom_depth)
@@ -523,7 +536,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "TRACER double cell long run with stratified profile and more limited top forcing"
+trial_name = "thick wall with tracer relaxation"
 
 
 
@@ -552,8 +565,8 @@ z_res = floor(Int, domain_z / z_grid_spacing);
 #"flat" dimension domain size
 domain_y = y_res * y_grid_spacing
 #miscellaneous
-pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
-#pipe_wall_thickness = roundUpWallThick(pipe_wall_thickness_intended, x_grid_spacing, 10)
+#pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
+pipe_wall_thickness = roundUpWallThick(pipe_wall_thickness_intended, x_grid_spacing, 10)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
@@ -628,6 +641,8 @@ end
 saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
 function myViscosity(x, y, z, parameters::NamedTuple)
     if (isPipeWall(x, z))
+        return 0
+    elseif (isSidePipe(x, z))
         return 0
     else 
         return parameters[:seawater].ν.molecular
@@ -720,6 +735,10 @@ T_domain = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainTwo, 
 S_domain = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainTwo, target = S_init_target)
 S_sides = Relaxation(rate = domain_rate, mask = sidePipeMask, target = S_init_b(1, 1, -pipe_top_depth))
 uw_domain = Relaxation(rate = domain_rate, mask = velocityRelaxationMaskDomainOne)
+#forcing system for thick pipe setup
+domain_rate = 1/max_damping_timescale
+T_domain_thick = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainThree, target = T_init_target)
+S_domain_thick = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomainThree, target = S_init_target)
 #no forcing
 # forcing = (u = noforcing,  w = noforcing, T = noforcing, S = noforcing)
 #sponge layer only
@@ -746,7 +765,10 @@ uw_domain = Relaxation(rate = domain_rate, mask = velocityRelaxationMaskDomainOn
 #pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
 #domain forcing with two side tubes 
-forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain), S=(S_domain, S_sides))
+#forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain), S=(S_domain, S_sides))
+#domain forcing for thick pipe 
+forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain_thick), S=(S_domain_thick))
+
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
 
@@ -783,7 +805,7 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 16hour
+run_duration = 2hour
 
 #just changed the timewizard to have max change 1.01, min change 0.8 but steps twice as frequently, to be able to use model last delta t more effectively
 #running model
@@ -1054,7 +1076,7 @@ x_spacings = xspacings(domain_grid, Center(), Center(), Center())
 z_spacings = zspacings(domain_grid, Center(), Center(), Center())
 
 plotInitialConditions(model)
-plotTracerMask(tracerRelaxationMaskDomainTwo, model)
+plotTracerMask(tracerRelaxationMaskDomainThree, model)
 plotTracerMask(velocityRelaxationMaskDomainOne, model)
 plotTracerMask(pipeWallMask, model)
 plotTracerMask(sidePipeMask, model)
