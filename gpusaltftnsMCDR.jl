@@ -10,15 +10,45 @@ using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
 
-#IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
-"""NAME"""
-trial_name = "gpu zero side viscosity double cell model"
-
-"""CONSTANTS AND PHYSICAL PROPERTIES"""
-#utility constants
 const day = 86400;
 const hour = 3600;
 const minute = 60;
+
+#IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
+"""NAME"""
+trial_name = "CPU nonzero side viscosity double cell model 0.05 spacing uniform"
+
+"""COMPUTER parameters"""
+const GPU_memory = 12
+
+"""SIMULATION RUN INFORMATION"""
+simulation_duration = 10minute
+run_duration = 1hour
+output_interval = 5
+
+"""DOMAIN SIZE & SETUP"""
+const domain_x = 20;
+const domain_z = 20;
+const x_center = domain_x/2;
+const max_grid_spacing = 0.05 #TODO: figure out what this needs to be set to 
+
+"""PIPE SIZE AND SETUP"""
+struct PipeWallData
+    thermal_diffusivity :: Float64
+    thickness :: Float64
+end
+const pipe_radius = 0.25
+const pipe_length = 10
+const pipe_top_depth = 4
+const pipe_wall_thickness_intended = 0.01
+const pipe_bottom_depth = pipe_top_depth + pipe_length
+const wall_material_ρ = 8900
+const wall_material_cₚ = 376.812 
+const wall_material_k = 50.208
+const pipe_data = PipeWallData(wall_material_k/(wall_material_cₚ*wall_material_ρ), pipe_wall_thickness_intended)
+
+"""CONSTANTS AND PHYSICAL PROPERTIES"""
+#utility constants
 const g = 9.806;
 const geopotential_height = 0;
 const CFL = 0.2;
@@ -35,25 +65,6 @@ const sw_T_diffusivity_molecular = 1.46e-7
 const sw_S_diffusivity_molecular = 1.3e-9
 const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
 
-"""DOMAIN SIZE & SETUP"""
-const domain_x = 20;
-const domain_z = 20;
-const x_center = domain_x/2;
-
-"""PIPE SIZE AND SETUP"""
-struct PipeWallData
-    thermal_diffusivity :: Float64
-    thickness :: Float64
-end
-const pipe_radius = 0.25
-const pipe_length = 10
-const pipe_top_depth = 4
-const pipe_wall_thickness_intended = 0.01
-const pipe_bottom_depth = pipe_top_depth + pipe_length
-const wall_material_ρ = 8900
-const wall_material_cₚ = 376.812 
-const wall_material_k = 50.208
-const pipe_data = PipeWallData(wall_material_k/(wall_material_cₚ*wall_material_ρ), pipe_wall_thickness_intended)
 
 """SET BACKGROUND TEMPERATURE AND SALINITY GRADIENTS"""
 const T_top = 21.67;
@@ -140,14 +151,12 @@ oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
 #grid spacing
-const max_grid_spacing = 0.05 #TODO: figure out what this needs to be set to 
 const x_grid_spacing = max_grid_spacing;
-const z_grid_spacing = 2*max_grid_spacing;
+const z_grid_spacing = max_grid_spacing;
 #resolution
 x_res = floor(Int, domain_x / x_grid_spacing);
 z_res = floor(Int, domain_z / z_grid_spacing);
 #call error if it is too large for model
-const GPU_memory = 12 #GB
 checkMemory(GPU_memory, x_res, z_res)
 #pipe wall thickness, as set by the model
 const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
@@ -157,8 +166,8 @@ const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing
 
 #location with equivalent density
 #TODO: potentially fix that height displaced with an estimation of where the density is equal 
-# v_max_predicted = oscillation_angular_frequency * height_displaced
-v_max_predicted = 0.025
+#v_max_predicted = oscillation_angular_frequency * 1
+v_max_predicted = 0.025 #this is just based on old simulations, shoudl perhaps change this. 
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
 max_time_step = 2 * min_time_step_predicted
 #damping rate for forcers  
@@ -311,8 +320,8 @@ end
 function myViscosity(x, y, z, diffusivities::NamedTuple)
     if (isPipeWall(x, z))
         return 0
-    elseif (isSidePipe(x, z))
-        return 0
+    # elseif (isSidePipe(x, z))
+    #     return 0
     else 
         return diffusivities[:seawater].ν
     end
@@ -352,6 +361,7 @@ model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, trac
 density_operation = seawater_density(model; geopotential_height)
 @info "model made"
 
+
 """SET UP INITIAL CONDITIONS"""
 set!(model, T= T_init, S=S_init, A = A_init)
 set!(model, T= T_init, S=S_init, A = A_init) #ASK  - why set twice ??
@@ -359,10 +369,6 @@ set!(model, T= T_init, S=S_init, A = A_init) #ASK  - why set twice ??
 
 
 """SETTING UP SIMULATION"""
-#how long you want to run simulation for
-simulation_duration = 1day
-run_duration = 2hour
-output_interval = 1minute
 
 #finding various time scales 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))

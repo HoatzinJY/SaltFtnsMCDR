@@ -831,7 +831,7 @@ A = model.tracers.A
 filename = joinpath("Trials",trial_name)
 #simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ); filename, schedule=IterationInterval(10), overwrite_existing=true) 
 #time interval option
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A); filename, schedule=TimeInterval(5), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A); filename, schedule=TimeInterval(10), overwrite_existing=true) #can also set to TimeInterval
 #time average perhaps?
 run!(simulation; pickup=false)
 
