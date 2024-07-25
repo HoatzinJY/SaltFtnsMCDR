@@ -10,8 +10,9 @@ using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
 
+#IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "GPU model test run on cpu"
+trial_name = "gpu run one on cpu"
 
 """CONSTANTS AND PHYSICAL PROPERTIES"""
 #utility constants
@@ -29,10 +30,10 @@ struct SeawaterDiffusivityData
 end
 const eddy_horizontal_diffusivity = 5e2 #not used
 const eddy_vertical_diffusivity = 1e-5 #not used
-const sw_viscosity = 1.05e-6
-const sw_T_diffusivity = 1.46e-7
-const sw_S_diffusivity = 1.3e-9
-const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity, sw_T_diffusivity, sw_S_diffusivity)
+const sw_viscosity_molecular = 1.05e-6
+const sw_T_diffusivity_molecular = 1.46e-7
+const sw_S_diffusivity_molecular = 1.3e-9
+const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
 
 """DOMAIN SIZE & SETUP"""
 const domain_x = 20;
@@ -86,11 +87,6 @@ TWaterColumnBCS(y, z, t) = TWaterColumn(z)
 TWaterColumnBCS(z, t) = TWaterColumn(z)
 SWaterColumnBCS(y, z, t) = SWaterColumn(z)
 SWaterColumnBCS(z, t) = SWaterColumn(z)
-#get gradients for boundary conditons
-initial_T_top_gradient = (TWaterColumn(0) - TWaterColumn(0 - z_grid_spacing))/z_grid_spacing
-initial_T_bottom_gradient = (TWaterColumn(domain_z + z_grid_spacing) - TWaterColumn(0domain_z))/z_grid_spacing
-initial_S_top_gradient = (SWaterColumn(0, 0 - z_grid_spacing) - SWaterColumn(0,0))/z_grid_spacing
-initial_S_bottom_gradient = (SWaterColumn(0, domain_z) - SWaterColumn(0, domain_z + z_grid_spacing))/z_grid_spacing
 
 
 """COMPUTATIONAL FUNCTIONS"""
@@ -143,7 +139,12 @@ const z_res = floor(Int, domain_z / z_grid_spacing);
 const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 #time stepping 
-v_max_predicted = oscillation_angular_frequency * height_displaced
+
+
+#location with equivalent density
+#TODO: potentially fix that height displaced with an estimation of where the density is equal 
+# v_max_predicted = oscillation_angular_frequency * height_displaced
+v_max_predicted = 0.025
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
 max_time_step = 2 * min_time_step_predicted
 #damping rate for forcers  
@@ -233,10 +234,18 @@ isInsidePipe(x, y, z) = isInsidePipe(x, z)
 pipeMask(x,y,z) = pipeMask(x, z)
 isSidePipe(x, y, z) = isSidePipe(x, z)
 sidePipeMask(x, y, z) = sidePipeMask(x, z)
+isPipeWall(x, y, z) = isPipeWall(x, z)
 pipeWallMask(x, y, z) = pipeWallMask(x, z)
 tracerRelaxationMaskDomainTwo(x, z) = tracerRelaxationMaskDomainTwo(x, 0, z)
 velocityRelaxationMaskDomainOne(x, z) = velocityRelaxationMaskDomainOne(x, 0, z)
 tracerRelaxationMaskDomainThree(x, z) = tracerRelaxationMaskDomainThree(x, 0, z)
+
+"""MODEL BOUNDARY CONDITIONS SETUP"""
+#get gradients for boundary conditons
+initial_T_top_gradient = (TWaterColumn(0) - TWaterColumn(0 - z_grid_spacing))/z_grid_spacing
+initial_T_bottom_gradient = (TWaterColumn(domain_z + z_grid_spacing) - TWaterColumn(0domain_z))/z_grid_spacing
+initial_S_top_gradient = (SWaterColumn(0, 0 - z_grid_spacing) - SWaterColumn(0,0))/z_grid_spacing
+initial_S_bottom_gradient = (SWaterColumn(0, domain_z) - SWaterColumn(0, domain_z + z_grid_spacing))/z_grid_spacing
 
 """FORCING FUNCTIONS"""
 #none currently used 
@@ -248,14 +257,14 @@ function tempDiffusivities(x, y, z, diffusivities::NamedTuple, wallThickness::Na
     if (isPipeWall(x, z) || wall_indicator == "WALL")
         return diffusivities[:pipe].thermal_diffusivity * (wallThickness[:actual]/wallThickness[:intended]) #edit to account for wall thickness
     else 
-        return diffusivities[:seawater].T.molecular
+        return diffusivities[:seawater].T
     end
 end
 function saltDiffusivities(x, y, z, diffusivities::NamedTuple)
     if (isPipeWall(x, z))
         return 0
     else 
-        return diffusivities[:seawater].S.molecular
+        return diffusivities[:seawater].S
     end
 end
 function myViscosity(x, y, z, diffusivities::NamedTuple)
@@ -264,7 +273,7 @@ function myViscosity(x, y, z, diffusivities::NamedTuple)
     elseif (isSidePipe(x, z))
         return 0
     else 
-        return diffusivities[:seawater].ν.molecular
+        return diffusivities[:seawater].ν
     end
 end
 tempDiffusivities(x, z, t) = tempDiffusivities(x, 0, z, diffusivity_data, pipeWallThickness, "")
@@ -272,7 +281,7 @@ saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
 myViscosity(x ,z ,t ) = myViscosity(x, 0, z, diffusivity_data)
 
 """MODEL SETUP"""
-domain_grid = RectilinearGrid(GPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
+domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
 
 clock = Clock{eltype(domain_grid)}(time=0)
 
@@ -292,13 +301,14 @@ boundary_conditions = (T = T_bcs, S = S_bcs)
 
 #TODO: combine these when set 
 uw_pipe_wall_forcer = Relaxation(rate = max_relaxation_rate, mask = pipeWallMask)
-T_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = T_init_target)
-S_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = S_init_target)
-S_side_forcer = Relaxation(rate = max_relaxation_rate, mask = sidePipeMask, target = S_init_b(1, 1, -pipe_top_depth))
+T_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = TWaterColumn)
+S_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = SWaterColumn)
+S_side_forcer = Relaxation(rate = max_relaxation_rate, mask = sidePipeMask, target = SWaterColumn(-pipe_top_depth))
 uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = velocityRelaxationMaskDomainOne)
-forcing = (u = uw_pipe_wall_forcer,  w = uw_pipe_wall_forcer, T = (T_domain), S=(S_domain, S_sides))
+forcing = (u = uw_pipe_wall_forcer,  w = uw_pipe_wall_forcer, T = (T_domain_forcer), S = (S_domain_forcer, S_side_forcer))
 
 model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing, boundary_conditions)
+density_operation = seawater_density(model; geopotential_height)
 @info "model made"
 
 """SET UP INITIAL CONDITIONS"""
@@ -307,7 +317,7 @@ function T_init(x, y, z)
 end
 function S_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
-        return TWaterColumn(-pipe_bottom_depth)
+        return SWaterColumn(-pipe_bottom_depth)
     else
         return SWaterColumn(z)
     end
@@ -322,7 +332,7 @@ end
 T_init(x, z) = T_init(x, 0, z)
 S_init(x, z) = S_init(x, 0, z)
 A_init(x, z) = A_init(x, 0, z)
-set!(model, T=T_init, S=S_init, w=w_init, A = A_init)
+set!(model, T=T_init, S=S_init, A = A_init)
 @info "initial conditions set"
 
 
@@ -335,6 +345,7 @@ output_interval = 5
 #finding various time scales 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 initial_travel_velocity_fake = 0.02 # a number just to set an initial time step, i set it to be around max for safety
+initial_advection_time_scale = min_grid_spacing/initial_travel_velocity_fake
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, pipeWallThickness, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0)
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step)
@@ -391,9 +402,7 @@ Sₙ = @lift interior(S_t[$n], :, 1, :)
 Aₙ = @lift interior(A_t[$n], :, 1, :)
 @info "finished extracting data as arrays"
 #how much of data set to plot 
-plot_until_time = -1 #enter -1 to plot whole thing
-lastFrame = getIndexFromTime(plot_until_time, times)
-num_Data_Points = lastFrame
+num_Data_Points = length(times)
 #very inefficient way of getting max/min, need to update
 T_range = getMaxAndMin(num_Data_Points, T_t)
 S_range = getMaxAndMin(num_Data_Points, S_t)
@@ -425,7 +434,7 @@ hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=Reverse(:
 Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
 fig
 @info "Making properties animation from data"
-frames = 1:lastFrame
+frames = 1:length(times)
 record(fig, filename * "properties.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
@@ -453,7 +462,7 @@ hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_colorbar_range, colormap=
 Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
 fig
 @info "Making velocities animation from data"
-frames = 1:lastFrame
+frames = 1:length(times)
 record(fig, filename * "velocities.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
@@ -469,6 +478,7 @@ ax_A = Axis(fig[2, 1]; title="tracer A", axis_kwargs...)
 A_colorbar_range = (A_range)
 hm_A = heatmap!(ax_A, xA, zA, Aₙ; colorrange=A_colorbar_range, colormap=:matter) 
 Colorbar(fig[2, 2], hm_A, label="amount")
+frames = 1:length(times)
 record(fig, filename * "tracer.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
@@ -567,6 +577,7 @@ function plotTracerMask(mask::Function, m)
     return fig
 end
 
+plotInitialConditions(model)
 
 
 #=notes --> another way to call functions, is to have one then call another that 

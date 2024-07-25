@@ -411,8 +411,8 @@ function S_init(x, y, z)
     #if it is in the pipe or the pipe wall, we set it to be equal to the salinity at the bottom
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
-    # elseif (isSidePipe(x, z)) #this section looks at if it is in the side "pipes", then we set it equal to the salinity at the top
-    #     return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
+    elseif (isSidePipe(x, z)) #this section looks at if it is in the side "pipes", then we set it equal to the salinity at the top
+        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
     elseif (z > -pipe_top_depth)
         return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
     elseif (z < -pipe_bottom_depth)
@@ -536,7 +536,7 @@ end
 
 
 """NAME OF TRIAL"""
-trial_name = "thick wall with tracer relaxation"
+trial_name = "zero side viscosity double cell model"
 
 
 
@@ -565,8 +565,8 @@ z_res = floor(Int, domain_z / z_grid_spacing);
 #"flat" dimension domain size
 domain_y = y_res * y_grid_spacing
 #miscellaneous
-#pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
-pipe_wall_thickness = roundUpWallThick(pipe_wall_thickness_intended, x_grid_spacing, 10)
+pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
+#pipe_wall_thickness = roundUpWallThick(pipe_wall_thickness_intended, x_grid_spacing, 10)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
 @info @sprintf("X spacings: %.3e meters | Y spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, y_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Y resolution: %.3e | Z resolution: %.3e ", x_res, y_res, z_res)
@@ -683,7 +683,8 @@ boundary_conditions = (T = T_bcs, S = S_bcs)
 #MANUALLY SET MAX TIME STEP, FOR FORCING FUNCTIONS RELAXATION RATE 
 #this sets it automatically based off predicted minimum delta T, which is predicte via height displacemnt and buoyancy frequency
 #TODO: is there a way to making foring timescale a function of model, such that it takes in model's timestep and sets it to be just over that --> look into source code 
-v_max_predicted = oscillation_angular_frequency * height_displaced
+v_max_predicted = 0.025 #based on old runs
+#v_max_predicted = oscillation_angular_frequency * height_displaced #currently outdataed, TODO fix this, because no longer displacing entire water column
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
 max_time_step = 2 * min_time_step_predicted#sets max time step to be 2x the predicted minimum time step
 #this sets a max ∇T time step manaully.  set this to be larger than what you think the time step will be
@@ -765,9 +766,9 @@ S_domain_thick = Relaxation(rate = domain_rate, mask = tracerRelaxationMaskDomai
 #pipe wall velocities, property sponge layer, internal pipe relaxation & initial pump velocity 
 #forcing = (u = (u_pipe_wall, uw_border),  w = (w_pipe_wall, uw_border, w_pump_forcing), T = T_border, S=(S_border, S_pipe))
 #domain forcing with two side tubes 
-#forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain), S=(S_domain, S_sides))
+forcing = (u = (u_pipe_wall),  w = (u_pipe_wall), T = (T_domain), S=(S_domain, S_sides))
 #domain forcing for thick pipe 
-forcing = (u = (u_pipe_wall, uw_domain),  w = (u_pipe_wall, uw_domain), T = (T_domain_thick), S=(S_domain_thick))
+#forcing = (u = (u_pipe_wall),  w = (u_pipe_wall), T = (T_domain_thick), S=(S_domain_thick))
 
 #BIOGEOCHEMISTRY
 # #biogeochemistry =  LOBSTER(; domain_grid); #not yet used at all
@@ -805,7 +806,7 @@ initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, 
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 simulation_duration = 1day
-run_duration = 2hour
+run_duration = 16hour
 
 #just changed the timewizard to have max change 1.01, min change 0.8 but steps twice as frequently, to be able to use model last delta t more effectively
 #running model
