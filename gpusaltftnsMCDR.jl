@@ -12,7 +12,7 @@ using NetCDF
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "gpu run one on cpu"
+trial_name = "gpu zero side viscosity double cell model"
 
 """CONSTANTS AND PHYSICAL PROPERTIES"""
 #utility constants
@@ -61,6 +61,7 @@ const T_bot = 11.86;
 const S_bot = 34.18;
 const S_top = 35.22;
 const delta_z = 200; 
+
 function TWaterColumn(z)
     if (z > -pipe_top_depth)
         return T_top - ((T_bot - T_top) / delta_z)*(-pipe_top_depth)
@@ -121,6 +122,16 @@ function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)#takes a posit
     T_consv = gsw_ct_from_t(S_abs, Tfunc(0,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
     return TEOS10.ρ(T_consv, S_abs, z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
 end
+function checkMemory(capacity, x_cells, z_cells)
+    numCells = x_cells * z_cells
+    possibleCells = (capacity/32) * 1000000 
+    if (numCells > possibleCells)
+        throw("Too many cells for gpu memory")
+        return numCells
+    else 
+        return numCells
+    end
+end     # uses the fact that 32gb is approx 100 million cells
 
 """CALCULATE DOMAIN DETAILS AND SAVE AS CONSTANTS"""
 #find oscillation period to get relevant timescales & velocities
@@ -131,10 +142,13 @@ oscillation_period = 2π/oscillation_angular_frequency
 #grid spacing
 const max_grid_spacing = 0.05 #TODO: figure out what this needs to be set to 
 const x_grid_spacing = max_grid_spacing;
-const z_grid_spacing = max_grid_spacing;
+const z_grid_spacing = 2*max_grid_spacing;
 #resolution
-const x_res = floor(Int, domain_x / x_grid_spacing);
-const z_res = floor(Int, domain_z / z_grid_spacing);
+x_res = floor(Int, domain_x / x_grid_spacing);
+z_res = floor(Int, domain_z / z_grid_spacing);
+#call error if it is too large for model
+const GPU_memory = 12 #GB
+checkMemory(GPU_memory, x_res, z_res)
 #pipe wall thickness, as set by the model
 const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 @info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
@@ -240,6 +254,31 @@ tracerRelaxationMaskDomainTwo(x, z) = tracerRelaxationMaskDomainTwo(x, 0, z)
 velocityRelaxationMaskDomainOne(x, z) = velocityRelaxationMaskDomainOne(x, 0, z)
 tracerRelaxationMaskDomainThree(x, z) = tracerRelaxationMaskDomainThree(x, 0, z)
 
+"""INITIAL CONDITIONS"""
+function T_init(x, y, z)
+    return TWaterColumn(z)
+end
+
+function S_init(x, y, z)
+    if (isInsidePipe(x, z) || isPipeWall(x, z))
+        return SWaterColumn(-pipe_bottom_depth)
+    elseif (isSidePipe(x, z))
+        return SWaterColumn(-pipe_top_depth)
+    else
+        return SWaterColumn(z)
+    end
+end
+function A_init(x, y, z)
+    if(z < -pipe_bottom_depth)
+        return 1
+    else
+        return 0
+    end
+end 
+T_init(x, z) = T_init(x, 0, z)
+S_init(x, z) = S_init(x, 0, z)
+A_init(x, z) = A_init(x, 0, z)
+
 """MODEL BOUNDARY CONDITIONS SETUP"""
 #get gradients for boundary conditons
 initial_T_top_gradient = (TWaterColumn(0) - TWaterColumn(0 - z_grid_spacing))/z_grid_spacing
@@ -249,6 +288,8 @@ initial_S_bottom_gradient = (SWaterColumn(0, domain_z) - SWaterColumn(0, domain_
 
 """FORCING FUNCTIONS"""
 #none currently used 
+TWaterColumnTarget(x, z, t) = TWaterColumn(z)
+SWaterColumnTarget(x, z, t) = SWaterColumn(z)
 
 """MODEL DIFFUSIVITY SETUP"""
 const diffusivity_data = (seawater = sw_diffusivity_data, pipe = pipe_data)
@@ -281,7 +322,7 @@ saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
 myViscosity(x ,z ,t ) = myViscosity(x, 0, z, diffusivity_data)
 
 """MODEL SETUP"""
-domain_grid = RectilinearGrid(CPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
+domain_grid = RectilinearGrid(GPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
 
 clock = Clock{eltype(domain_grid)}(time=0)
 
@@ -301,8 +342,8 @@ boundary_conditions = (T = T_bcs, S = S_bcs)
 
 #TODO: combine these when set 
 uw_pipe_wall_forcer = Relaxation(rate = max_relaxation_rate, mask = pipeWallMask)
-T_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = TWaterColumn)
-S_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = SWaterColumn)
+T_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = TWaterColumnTarget)
+S_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = SWaterColumnTarget)
 S_side_forcer = Relaxation(rate = max_relaxation_rate, mask = sidePipeMask, target = SWaterColumn(-pipe_top_depth))
 uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = velocityRelaxationMaskDomainOne)
 forcing = (u = uw_pipe_wall_forcer,  w = uw_pipe_wall_forcer, T = (T_domain_forcer), S = (S_domain_forcer, S_side_forcer))
@@ -312,35 +353,16 @@ density_operation = seawater_density(model; geopotential_height)
 @info "model made"
 
 """SET UP INITIAL CONDITIONS"""
-function T_init(x, y, z)
-    return TWaterColumn(z)
-end
-function S_init(x, y, z)
-    if (isInsidePipe(x, z) || isPipeWall(x, z))
-        return SWaterColumn(-pipe_bottom_depth)
-    else
-        return SWaterColumn(z)
-    end
-end
-function A_init(x, y, z)
-    if(z < -pipe_bottom_depth)
-        return 1
-    else
-        return 0
-    end
-end 
-T_init(x, z) = T_init(x, 0, z)
-S_init(x, z) = S_init(x, 0, z)
-A_init(x, z) = A_init(x, 0, z)
-set!(model, T=T_init, S=S_init, A = A_init)
+set!(model, T= T_init, S=S_init, A = A_init)
+set!(model, T= T_init, S=S_init, A = A_init) #ASK  - why set twice ??
 @info "initial conditions set"
 
 
 """SETTING UP SIMULATION"""
 #how long you want to run simulation for
 simulation_duration = 1day
-run_duration = 60
-output_interval = 5
+run_duration = 2hour
+output_interval = 1minute
 
 #finding various time scales 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
@@ -484,11 +506,6 @@ record(fig, filename * "tracer.mp4", frames, framerate=8) do i
     n[] = i
 end
 @info @sprintf("Done. Simulation total run time %.3f seconds | %.3f minutes", times[end], times[end]/minute)
-
-
-
-
-
 
 
 
