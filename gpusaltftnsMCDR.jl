@@ -16,13 +16,18 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "GPU test case settings set right and side pipe viscosity 0"
+trial_name = "double diffusion 2 to 1 min 0.05"
+#next run wih min 0.003, and then 2x
+#then with 0.1, and 2x
+
+#for full size model
+#try 30m x 300m 
 
 """COMPUTER parameters"""
 const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
-simulation_duration = 30minute
+simulation_duration = 1hour
 run_duration = 5minute
 output_interval = 1minute
 
@@ -30,7 +35,7 @@ output_interval = 1minute
 const domain_x = 20;
 const domain_z = 20;
 const x_center = domain_x/2;
-const max_grid_spacing = 0.05 #TODO: figure out what this needs to be set to 
+max_grid_spacing = 0.05; #TODO: figure out what this needs to be set to 
 
 """PIPE SIZE AND SETUP"""
 struct PipeWallData
@@ -135,7 +140,7 @@ function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)#takes a posit
 end
 function checkMemory(capacity, x_cells, z_cells)
     numCells = x_cells * z_cells
-    possibleCells = (capacity/32) * 1000000 
+    possibleCells = (capacity/32) * 100000000
     if (numCells > possibleCells)
         throw("Too many cells for gpu memory")
         return numCells
@@ -150,20 +155,23 @@ surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_leng
 oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
-#grid spacing
-const x_grid_spacing = max_grid_spacing;
-const z_grid_spacing = max_grid_spacing;
+#grid spacing desired
+my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
+my_z_grid_spacing = 2*max_grid_spacing;
 #resolution
-x_res = floor(Int, domain_x / x_grid_spacing);
-z_res = floor(Int, domain_z / z_grid_spacing);
+x_res = floor(Int, domain_x / my_x_grid_spacing);
+z_res = floor(Int, domain_z / my_z_grid_spacing);
+#grid spacing adjusted to be divisible in domain_grid
+const x_grid_spacing = domain_x/x_res;
+const z_grid_spacing = domain_z/z_res;
 #call error if it is too large for model
 checkMemory(GPU_memory, x_res, z_res)
 #pipe wall thickness, as set by the model
 const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
-@info @sprintf("Pipe walls are %1.2f meters thick", pipe_wall_thickness)
+@info @sprintf("Pipe walls are %.3e meters thick", pipe_wall_thickness)
+@info @sprintf("X spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, z_grid_spacing)
+@info @sprintf("X resolution: %.3e | Z resolution: %.3e ", x_res, z_res)
 #time stepping 
-
-
 #location with equivalent density
 #TODO: potentially fix that height displaced with an estimation of where the density is equal 
 #v_max_predicted = oscillation_angular_frequency * 1
@@ -367,10 +375,6 @@ density_operation = seawater_density(model; geopotential_height)
 
 
 """SET UP INITIAL CONDITIONS"""
-#TODO: some weird behaviour here 
-# function w_init(x, z)
-#     return 0;
-# end
 set!(model, T= T_init, S=S_init, w = w_init, A = A_init)#ASK  - why set twice ??
 @info "initial conditions set"
 
