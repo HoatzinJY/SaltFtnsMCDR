@@ -16,7 +16,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "GPU test case"
+trial_name = "GPU test case new"
 
 """COMPUTER parameters"""
 const GPU_memory = 12
@@ -358,7 +358,7 @@ T_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxation
 S_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = SWaterColumnTarget)
 S_side_forcer = Relaxation(rate = max_relaxation_rate, mask = sidePipeMask, target = SWaterColumn(-pipe_top_depth))
 uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = velocityRelaxationMaskDomainOne)
-forcing = (u = uw_pipe_wall_forcer,  w = uw_pipe_wall_forcer, T = (T_domain_forcer), S = (S_domain_forcer, S_side_forcer))
+forcing = (u = (uw_pipe_wall_forcer, uw_domain_forcer),  w = (uw_pipe_wall_forcer, uw_domain_forcer), T = (T_domain_forcer), S = (S_domain_forcer, S_side_forcer))
 
 model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing, boundary_conditions)
 
@@ -391,9 +391,11 @@ new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step_allowed) #TRAC
 #set up simulation & timewizard
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
 
+
+
 #various callbacks
 #timewizard
-timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.1, min_change = 0.5) 
+timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.01, min_change = 0.8) 
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 #progress Message
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
