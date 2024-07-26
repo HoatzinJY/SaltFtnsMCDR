@@ -16,7 +16,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "GPU test case new"
+trial_name = "GPU test case settings set right and side pipe viscosity 0"
 
 """COMPUTER parameters"""
 const GPU_memory = 12
@@ -166,8 +166,8 @@ const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing
 
 #location with equivalent density
 #TODO: potentially fix that height displaced with an estimation of where the density is equal 
-v_max_predicted = oscillation_angular_frequency * 1
-#v_max_predicted = 0.025 #this is just based on old simulations, shoudl perhaps change this. 
+#v_max_predicted = oscillation_angular_frequency * 1
+v_max_predicted = 0.03 #this is just based on old simulations, shoudl perhaps change this. 
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
 max_time_step_allowed = 2 * min_time_step_predicted
 #damping rate for forcers  
@@ -322,8 +322,8 @@ end
 function myViscosity(x, y, z, diffusivities::NamedTuple)
     if (isPipeWall(x, z))
         return 0
-    # elseif (isSidePipe(x, z))
-    #     return 0
+    elseif (isSidePipe(x, z))
+        return 0
     else 
         return diffusivities[:seawater].ν
     end
@@ -380,7 +380,7 @@ interior(model.tracers.T)
 """SETTING UP SIMULATION"""
 #finding various time scales 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
-initial_travel_velocity_fake = 0.001 # a number just to set an initial time step, i set it to be around max for safety
+initial_travel_velocity_fake = 0.025 # a number just to set an initial time step, i set it to be around max for safety
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity_fake
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, pipeWallThickness, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0)
@@ -395,7 +395,7 @@ simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_durat
 
 #various callbacks
 #timewizard
-timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.01, min_change = 0.8) 
+timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.2, min_change = 0.5) 
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 #progress Message
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
@@ -539,87 +539,3 @@ end
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-"""MORE PLOTTING"""
-#TODO: fix this, no longer works due to array things
-function plotInitialConditions(m)
-    geopotential_height = 0
-    density_operation = density_operation = seawater_density(m; geopotential_height)
-    density_field = Field(density_operation)
-    compute!(density_field)
-    fig = Figure(size=(600, 800))
-    title = "initial conditions"
-    Label(fig[0, :], title)
-    x = xnodes(m.tracers.T)
-    z = znodes(m.tracers.T)
-    axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
-    ax1 = Axis(fig[1, 1]; title="Temperature (C)", axis_kwargs...)
-    T_init_matrix = interior(m.tracers.T, :, 1, :)
-    T_lims = (minimum(T_init_matrix), maximum(T_init_matrix));
-    hm1 = heatmap!(ax1, x, z, T_init_matrix, colorrange=T_lims, colormap=:thermal, interpolate=true)
-    Colorbar(fig[1, 2], hm1)
-    ax2 = Axis(fig[2, 1]; title="Salinity (ppt)", axis_kwargs...)
-    S_init_matrix = interior(m.tracers.S, :, 1, :)
-    S_lims = (minimum(S_init_matrix), maximum(S_init_matrix));
-    hm2 = heatmap!(ax2, x, z, S_init_matrix, colorrange=S_lims, colormap=:haline, interpolate=true)
-    Colorbar(fig[2, 2], hm2)
-    ax3 = Axis(fig[3, 1]; title="Density (kg/m^3)", axis_kwargs...)
-    ρ_init_matrix = interior(density_field, :, 1, :)
-    ρ_lims = (minimum(ρ_init_matrix), maximum(ρ_init_matrix));
-    hm3 = heatmap!(ax3, x, z, ρ_init_matrix, colorrange=ρ_lims, colormap=Reverse(:viridis), interpolate=true)
-    Colorbar(fig[3, 2], hm3)
-    ax4 = Axis(fig[4, 1]; title="Tracer", axis_kwargs...)
-    A_init_matrix = interior(m.tracers.A, :, 1, :)
-    A_lims = (minimum(A_init_matrix), maximum(A_init_matrix));
-    hm4 = heatmap!(ax4, x, z, A_init_matrix, colorrange=A_lims, colormap=:matter, interpolate=true)
-    Colorbar(fig[4, 2], hm4)
-    return fig
-end 
-function plotTracerMask(mask::Function, m)
-    fig = Figure()
-    title = "tracer mask for "*String(Symbol(mask))
-    Label(fig[0, :], title)
-    x = xnodes(m.tracers.T)
-    z = znodes(m.tracers.T)
-    myNodes = nodes(model.grid, (Center(), Center(), Center()), reshape = true)
-    maskArray = zeros(Float64, size(myNodes[1])[1], size(myNodes[3])[3])
-    for i in eachindex(myNodes[1])
-        for j in eachindex(myNodes[3])
-            maskArray[i, j] = mask(myNodes[1][i], myNodes[3][j])
-        end
-    end
-    axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
-    ax = Axis(fig[1, 1]; title="Mask Intensity", axis_kwargs...)
-    lims = (minimum(maskArray), maximum(maskArray));
-    hm = heatmap!(ax, x, z, maskArray, colorrange=lims, colormap=:grays, interpolate=true)
-    Colorbar(fig[1, 2], hm)
-    return fig
-end
-
-plotInitialConditions(model)
-
-
-#=notes --> another way to call functions, is to have one then call another that 
-passes the "global" parameters in  
-for example
-T = 3
-function myFunc(x, VAR)
-    return x*VAR
-end
-myFunc(x) = myFUNC(x, T)
-=#
