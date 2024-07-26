@@ -291,14 +291,14 @@ S_init(x, z) = S_init(x, 0, z)
 A_init(x, z) = A_init(x, 0, z)
 
 """MODEL BOUNDARY CONDITIONS SETUP"""
-#get gradients for boundary conditons
+# get gradients for boundary conditons
 initial_T_top_gradient = (TWaterColumn(0) - TWaterColumn(0 - z_grid_spacing))/z_grid_spacing
 initial_T_bottom_gradient = (TWaterColumn(domain_z + z_grid_spacing) - TWaterColumn(0domain_z))/z_grid_spacing
 initial_S_top_gradient = (SWaterColumn(0, 0 - z_grid_spacing) - SWaterColumn(0,0))/z_grid_spacing
 initial_S_bottom_gradient = (SWaterColumn(0, domain_z) - SWaterColumn(0, domain_z + z_grid_spacing))/z_grid_spacing
 
 """FORCING FUNCTIONS"""
-#none currently used 
+# #none currently used 
 TWaterColumnTarget(x, z, t) = TWaterColumn(z)
 SWaterColumnTarget(x, z, t) = SWaterColumn(z)
 
@@ -346,6 +346,7 @@ buoyancy = SeawaterBuoyancy(equation_of_state=eos)
 
 tracers = (:T, :S, :A)
 closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffusivities, A = 0))
+#closure = ScalarDiffusivity(ν = 1, κ=1)
 
 T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
 S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
@@ -360,6 +361,7 @@ uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = velocityRelaxat
 forcing = (u = uw_pipe_wall_forcer,  w = uw_pipe_wall_forcer, T = (T_domain_forcer), S = (S_domain_forcer, S_side_forcer))
 
 model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing, boundary_conditions)
+
 density_operation = seawater_density(model; geopotential_height)
 @info "model made"
 
@@ -371,6 +373,7 @@ density_operation = seawater_density(model; geopotential_height)
 # end
 set!(model, T= T_init, S=S_init, w = w_init, A = A_init)#ASK  - why set twice ??
 @info "initial conditions set"
+
 
 interior(model.tracers.T)
 
