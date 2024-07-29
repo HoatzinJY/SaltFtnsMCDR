@@ -16,26 +16,26 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "double diffusion 2 to 1 min 0.05"
+trial_name = "double diffusion 1 to 1 min 0.010 long"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
 #for full size model
-#try 30m x 300m 
+#try 30m x 300m
 
 """COMPUTER parameters"""
 const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
-simulation_duration = 1hour
-run_duration = 5minute
+simulation_duration = 1day
+run_duration = 48hour
 output_interval = 1minute
 
 """DOMAIN SIZE & SETUP"""
 const domain_x = 20;
 const domain_z = 20;
 const x_center = domain_x/2;
-max_grid_spacing = 0.05; #TODO: figure out what this needs to be set to 
+max_grid_spacing = 0.01; #TODO: figure out what this needs to be set to 
 
 """PIPE SIZE AND SETUP"""
 struct PipeWallData
@@ -157,7 +157,7 @@ oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
 #grid spacing desired
 my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
-my_z_grid_spacing = 2*max_grid_spacing;
+my_z_grid_spacing = max_grid_spacing;
 #resolution
 x_res = floor(Int, domain_x / my_x_grid_spacing);
 z_res = floor(Int, domain_z / my_z_grid_spacing);
@@ -376,6 +376,7 @@ density_operation = seawater_density(model; geopotential_height)
 
 """SET UP INITIAL CONDITIONS"""
 set!(model, T= T_init, S=S_init, w = w_init, A = A_init)#ASK  - why set twice ??
+set!(model, T= T_init, S=S_init, w = w_init, A = A_init)
 @info "initial conditions set"
 
 
@@ -442,15 +443,14 @@ Tₙ = @lift interior(T_t[$n], :, 1, :)
 Sₙ = @lift interior(S_t[$n], :, 1, :)
 ρₙ = @lift interior(ρ_t[$n], :, 1, :)
 Aₙ = @lift interior(A_t[$n], :, 1, :)
-@info "finished extracting data as arrays"
 #how much of data set to plot 
 num_Data_Points = length(times)
 #very inefficient way of getting max/min, need to update
 T_range = getMaxAndMin(num_Data_Points, T_t)
 S_range = getMaxAndMin(num_Data_Points, S_t)
+ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
 u_range = getMaxAndMin(num_Data_Points, u_t)
 w_range = getMaxAndMin(num_Data_Points, w_t)
-ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
 ζ_range = getMaxAndMin(num_Data_Points, ζ_t)
 A_range = getMaxAndMin(num_Data_Points, A_t)
 @info "finished getting max and min of each"
