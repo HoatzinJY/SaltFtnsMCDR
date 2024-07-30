@@ -448,7 +448,7 @@ S = model.tracers.S;
 A = model.tracers.A
 filename = joinpath("Trials",(trial_name))
 #averaging output writer --> average over the buoyancy oscillation
-schedule = AveragedTimeInterval()
+#schedule = AveragedTimeInterval()
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A); filename, schedule=TimeInterval(output_interval), overwrite_existing=true) #can also set to TimeInterval
 
 
@@ -458,8 +458,6 @@ run!(simulation; pickup=false)
 
 #visualize simulation
 #visualize simulation
-trial_name = "0.05 fully symmetric no salinity forcing but zero diffusivity long"
-filename = joinpath("Trials",(trial_name))
 output_filename = filename * ".jld2"
 u_t = FieldTimeSeries(output_filename, "u")
 w_t = FieldTimeSeries(output_filename, "w")
@@ -537,6 +535,68 @@ save(filename * "averaged values vs time.png", fig)
 @info "Finished plotting average values vs time chart"
 
 #plotting the average along each z line in pipe, vs time 
+#this gets the discrete indexes for the pipe wall start and end and returns it as a 2-vector 
+function getPipeXIndexRange(fieldNodes)
+    leftIndex = -1
+    rightIndex = -1
+    z_center_index = ceil(Int, length(fieldNodes[3])/2)
+    edgedetector = 0;
+    for i in 1 : length(fieldNodes[1])
+        if (pipeMask(fieldNodes[1][i], fieldNodes[3][z_center_index]) != edgedetector)
+            if (edgedetector == 0)
+                leftIndex = i
+                edgedetector = 1
+            else 
+                rightIndex = i -1
+                break;
+            end
+        end
+    end
+    if (leftIndex == -1 || rightIndex == -1)
+        throw("pipe side walls not found")
+    else
+        return [leftIndex, rightIndex]
+    end
+end 
+#This functon returns the discrete index for z, rounding to the nearest one. If the point is perfectly in between two, it returns the lower one 
+function getZIndex(fieldNodes, zCoord)
+    for i in 1 : length(fieldNodes[3])
+        if(abs(fieldNodes[3][i] - zCoord) <= (z_grid_spacing/2))
+            return i
+        end
+    end
+    throw("index not found for given z value")
+end
+
+w_velocity_nodes = nodes(w_t[1].grid, (Center(), Center(), Face()), reshape = true)
+x_pipe_range= getPipeXIndexRange(w_velocity_nodes) 
+#this is the index at the middle
+x_plot_range = w_velocity_nodes[1][(x_pipe_range[1] - 4):(x_pipe_range[2] + 4)]#gives a 4 cell halo
+
+
+#plot at halfway point
+z_index = getZIndex(w_velocity_nodes, -pipe_top_depth - (pipe_length/2)) 
+w_plot_range = interior(w_t[10], (x_pipe_range[1] - 4):(x_pipe_range[2] + 4) , 1, z_index)
+
+fig = Figure()
+title = "cross sectional velocities"
+fig[0, :] = Label(fig, title)
+cross_velocities_plot= Axis(fig[1,1], title = "Pipe Cross Sectional Velocities", xlabel="x (m)", ylabel = "velocities (m/s)", width =  400)
+scatterlines!(x_plot_range, w_plot_range, label = "pipe halfway velocities", color = :mediumpurple2, markersize = 3)
+#fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
+fig
+
+
+
+#TODO: get it to record, center x label around the pipe center, set y lims to be equal to max and min plot rest of them on same plot
+
+wₙ = @lift interior(w_t[$n], (x_pipe_range[1] - 4):(x_pipe_range[2] + 4) , 1, z_index)
+
+#remember to set y range to be min and max values 
+
+
+
+
 
 
 
