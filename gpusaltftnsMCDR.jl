@@ -27,7 +27,7 @@ trial_name = "resolved fully symmetric no salinity forcing but zero diffusivity"
 const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
-simulation_duration = 30minute
+simulation_duration = 30minute #about 6-7 hours ish shoudl reach approx steady state with current setup
 run_duration = 1minute
 output_interval = 1minute
 
@@ -132,6 +132,20 @@ function getMaskedAverage(mask::Function, field, locs)
 end
 getMaskedAverageTracer(mask::Function, field) = getMaskedAverage(mask::Function, field, (Center(), Center(), Center()))
 getMaskedAverageVelocity(mask::Function, field) = getMaskedAverage(mask::Function, field, (Face(), Face(), Face()))
+function getMaskedAverageAtZ(mask::Function, field, locs, zCoord, z_spacings)
+    fieldNodes = nodes(field.grid, locs, reshape = true)
+    sum = 0;
+    count = 0;
+    for i in eachindex(fieldNodes[1])
+        for j in eachindex(fieldNodes[3])
+            if (abs(fieldNodes[3][j] - zCoord) < z_spacings)
+                sum += mask(fieldNodes[1][i], fieldNodes[3][j]) * field.data[i, 1, j]
+                count += 1*mask(fieldNodes[1][i], fieldNodes[3][j])
+            end
+        end
+    end
+    return sum/count
+end
 function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)#takes a positive depth
     eos = TEOS10EquationOfState() 
     S_abs = gsw_sa_from_sp(Sfunc(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
@@ -400,8 +414,6 @@ set!(model, T= T_init, S=S_init, w = w_init, A = A_init)
 @info "initial conditions set"
 
 
-interior(model.tracers.T)
-
 """SETTING UP SIMULATION"""
 #finding various time scales 
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
@@ -444,6 +456,8 @@ run!(simulation; pickup=false)
 
 #visualize simulation
 #visualize simulation
+trial_name = "0.05 fully symmetric no salinity forcing but zero diffusivity long"
+filename = joinpath("Trials",(trial_name))
 output_filename = filename * ".jld2"
 u_t = FieldTimeSeries(output_filename, "u")
 w_t = FieldTimeSeries(output_filename, "w")
@@ -474,6 +488,51 @@ w_range = getMaxAndMin(num_Data_Points, w_t)
 ζ_range = getMaxAndMin(num_Data_Points, ζ_t)
 A_range = getMaxAndMin(num_Data_Points, A_t)
 @info "finished getting max and min of each"
+
+
+#TODO: prototyping some plotting 
+
+#plotting the average along the pipe vs time 
+function plotAverages(timeSeriesField, myTimes, locs)
+    averages = zeros(length(myTimes))
+    colors = (:lightblue, :blue, :navy)
+    for i in 0.25:0.25:0.75
+        for j in 1 : length(myTimes)
+            averages[j] = getMaskedAverageAtZ(pipeMask, timeSeriesField[j], locs, (-pipe_top_depth - i*pipe_length), z_grid_spacing)
+        end
+        scatterlines!((myTimes/hour), averages, label = @sprintf("@ %1.2f pipe", i), color = colors[i/0.25], markersize = 5)
+    end
+
+    average_all = zeros(length(myTimes))
+    for i in 1 : length(myTimes)
+        average_all[i] = getMaskedAverage(pipeMask, timeSeriesField[i], locs)
+    end
+    scatterlines!((myTimes/hour), average_all, label = "avg entire pipe", color = :red, marker = :cross, markersize = 5)
+end
+
+fig = Figure(size = (1000, 600))
+#fig[0, :] = Label(fig, title)
+title = "Averaged Values"
+fig[0, :] = Label(fig, title)
+velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
+plotAverages(w_t, times, (Center(), Center(), Face()))
+xlims!(0, 6)
+fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
+temps_plot = Axis(fig[2,1], title = "Pipe Temperatures Averaged", xlabel="time(hrs)", ylabel = "Temperature(C)", width =  700)
+plotAverages(T_t, times, (Center(), Center(), Center()))
+xlims!(0, 6)
+fig[2, 2] = Legend(fig, temps_plot, frame_visible = false)
+salinities_plot = Axis(fig[3, 1], title = "Pipe Salinity Averaged", xlabel="time(hrs)", ylabel = "Salinity(ppt)", width =  700)
+plotAverages(S_t, times, (Center(), Center(), Center()))
+xlims!(0, 6)
+fig[3, 2] = Legend(fig, salinities_plot, frame_visible = false)
+fig
+save(filename * "averaged values vs time 6hrs.png", fig)
+@info "Finished plotting average values vs time chart"
+
+#plotting the average along each z line in pipe, vs time 
+
+
 
 
 #making animations 
@@ -591,7 +650,7 @@ Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
 fig
 @info "Making velocities animation from data"
 frames = 1:length(times)
-record(fig, filename * "velocities.mp4", frames, framerate=8) do i
+record(fig, filename * "ZOOMvelocities.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
@@ -641,7 +700,7 @@ Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
 fig
 @info "Making properties animation from data"
 frames = 1:length(times)
-record(fig, filename * "properties.mp4", frames, framerate=8) do i
+record(fig, filename * "ZOOMproperties.mp4", frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
