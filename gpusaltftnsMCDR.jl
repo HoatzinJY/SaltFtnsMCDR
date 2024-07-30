@@ -16,7 +16,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "0.05 fully symmetric no salinity forcing but zero diffusivity"
+trial_name = "resolved fully symmetric no salinity forcing but zero diffusivity"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -156,8 +156,9 @@ oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
 #grid spacing desired
-my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
-my_z_grid_spacing = max_grid_spacing;
+max_grid_spacing = ((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
+my_x_grid_spacing = 0.95*max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
+my_z_grid_spacing = 0.95*max_grid_spacing;
 #resolution
 x_res = floor(Int, domain_x / my_x_grid_spacing);
 z_res = floor(Int, domain_z / my_z_grid_spacing);
