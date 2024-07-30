@@ -170,9 +170,9 @@ oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
 #grid spacing desired
-max_grid_spacing = ((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
-my_x_grid_spacing = 0.95*max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
-my_z_grid_spacing = 0.95*max_grid_spacing;
+# max_grid_spacing = ((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
+my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
+my_z_grid_spacing = max_grid_spacing;
 #resolution
 x_res = floor(Int, domain_x / my_x_grid_spacing);
 z_res = floor(Int, domain_z / my_z_grid_spacing);
@@ -447,6 +447,8 @@ S = model.tracers.S;
 ρ = Field(density_operation)
 A = model.tracers.A
 filename = joinpath("Trials",(trial_name))
+#averaging output writer --> average over the buoyancy oscillation
+schedule = AveragedTimeInterval()
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A); filename, schedule=TimeInterval(output_interval), overwrite_existing=true) #can also set to TimeInterval
 
 
@@ -516,18 +518,22 @@ title = "Averaged Values"
 fig[0, :] = Label(fig, title)
 velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
 plotAverages(w_t, times, (Center(), Center(), Face()))
-xlims!(0, 6)
+xlims!(0, 24)
 fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
 temps_plot = Axis(fig[2,1], title = "Pipe Temperatures Averaged", xlabel="time(hrs)", ylabel = "Temperature(C)", width =  700)
 plotAverages(T_t, times, (Center(), Center(), Center()))
-xlims!(0, 6)
+scatterlines!(times, fill(TWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot,)
+scatterlines!(times, fill(TWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
+xlims!(0, 24)
 fig[2, 2] = Legend(fig, temps_plot, frame_visible = false)
 salinities_plot = Axis(fig[3, 1], title = "Pipe Salinity Averaged", xlabel="time(hrs)", ylabel = "Salinity(ppt)", width =  700)
 plotAverages(S_t, times, (Center(), Center(), Center()))
-xlims!(0, 6)
+scatterlines!(times, fill(SWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot)
+scatterlines!(times, fill(SWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
+xlims!(0, 24)
 fig[3, 2] = Legend(fig, salinities_plot, frame_visible = false)
 fig
-save(filename * "averaged values vs time 6hrs.png", fig)
+save(filename * "averaged values vs time.png", fig)
 @info "Finished plotting average values vs time chart"
 
 #plotting the average along each z line in pipe, vs time 
