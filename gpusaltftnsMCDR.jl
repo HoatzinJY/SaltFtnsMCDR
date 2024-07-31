@@ -9,6 +9,7 @@ using Oceananigans.Models: seawater_density
 using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
+using DSP
 
 const day = 86400;
 const hour = 3600;
