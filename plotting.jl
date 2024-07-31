@@ -9,6 +9,7 @@ using Oceananigans.Models: seawater_density
 using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
+using DSP
 
 const day = 86400;
 const hour = 3600;
@@ -16,33 +17,26 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "forcing salinity side pipes high 0.01 resolution"
+trial_name = "resolved 0.00778 res fully symmetric 0.25m radius 20m x"
 pathname = joinpath("Trials", trial_name)
-#filename = "data.jld2"
-filename = "double diffusion 1 to 1 min 0.010 long.jld2"
+filename = "resolved fully symmetric no salinity forcing but zero diffusivity.jld2"
 output_filename = joinpath(pathname, filename)
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
 #for full size model
 #try 30m x 300m
-
-"""COMPUTER parameters"""
-const GPU_memory = 12
-
+"""FREQUENCY"""
+output_interval = 1minute
 
 """DOMAIN SIZE & SETUP"""
 const domain_x = 20;
 const domain_z = 20;
 #const domain_z = 300;
 const x_center = domain_x/2;
-max_grid_spacing = 0.01; #TODO: figure out what this needs to be set to 
+#max_grid_spacing = 0.05; #TODO: figure out what this needs to be set to 
 
 """PIPE SIZE AND SETUP"""
-struct PipeWallData
-    thermal_diffusivity :: Float64
-    thickness :: Float64
-end
 const pipe_radius = 0.25
 const pipe_length = 10
 const pipe_top_depth = 4
@@ -50,17 +44,13 @@ const pipe_top_depth = 4
 # const pipe_top_depth = 50
 const pipe_wall_thickness_intended = 0.01
 const pipe_bottom_depth = pipe_top_depth + pipe_length
-const wall_material_ρ = 8900
-const wall_material_cₚ = 376.812 
-const wall_material_k = 50.208
-const pipe_data = PipeWallData(wall_material_k/(wall_material_cₚ*wall_material_ρ), pipe_wall_thickness_intended)
+
 
 """CONSTANTS AND PHYSICAL PROPERTIES"""
 #utility constants
 const g = 9.806;
 const geopotential_height = 0;
 const CFL = 0.2;
-#diffusion information
 struct SeawaterDiffusivityData
     ν :: Float64
     T :: Float64
@@ -72,7 +62,6 @@ const sw_viscosity_molecular = 1.05e-6
 const sw_T_diffusivity_molecular = 1.46e-7
 const sw_S_diffusivity_molecular = 1.3e-9
 const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
-
 
 """SET BACKGROUND TEMPERATURE AND SALINITY GRADIENTS"""
 const T_top = 21.67;
@@ -121,6 +110,9 @@ function getMaxAndMin(numPoints, dataSeries)
     end
     return (myMin, myMax)
 end
+
+
+
 function getMaskedAverage(mask::Function, field, locs)
     fieldNodes = nodes(field.grid, locs, reshape = true)
     sum = 0;
@@ -173,7 +165,7 @@ oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
 #grid spacing desired
-# max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
+max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
 @info @sprintf("Max Grid Spacing: %.3em", max_grid_spacing)
 my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
 my_z_grid_spacing = max_grid_spacing;
@@ -312,7 +304,7 @@ T_t = FieldTimeSeries(output_filename, "T")
 S_t = FieldTimeSeries(output_filename, "S")
 ρ_t = FieldTimeSeries(output_filename, "ρ")
 A_t = FieldTimeSeries(output_filename, "A")
-times = u_t.times
+times = w_t.times
 n = Observable(1)
 Observable(1)
 @info @sprintf("Finished extracting time series. Simulation total run time %.3f seconds | %.3f minutes", times[end], times[end]/minute)
@@ -363,19 +355,53 @@ title = "Averaged Values"
 fig[0, :] = Label(fig, title)
 velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
 plotAverages(w_t, times, (Center(), Center(), Face()))
+xlims!(0, times[end]/hour)
 fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
 temps_plot = Axis(fig[2,1], title = "Pipe Temperatures Averaged", xlabel="time(hrs)", ylabel = "Temperature(C)", width =  700)
 plotAverages(T_t, times, (Center(), Center(), Center()))
+xlims!(0, times[end]/hour)
 scatterlines!(times, fill(TWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot,)
 scatterlines!(times, fill(TWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
 fig[2, 2] = Legend(fig, temps_plot, frame_visible = false)
 salinities_plot = Axis(fig[3, 1], title = "Pipe Salinity Averaged", xlabel="time(hrs)", ylabel = "Salinity(ppt)", width =  700)
 plotAverages(S_t, times, (Center(), Center(), Center()))
+xlims!(0, times[end]/hour)
 scatterlines!(times, fill(SWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot)
 scatterlines!(times, fill(SWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
 fig[3, 2] = Legend(fig, salinities_plot, frame_visible = false)
 fig
 save(joinpath(pathname,"averaged values vs time.png"), fig)
+@info "Finished plotting average values vs time chart"
+
+
+#plot filtered velocity and flux 
+#unfiltered
+averages_unfilt = zeros(length(times))
+for j in 1 : length(times)
+    averages_unfilt[j] = getMaskedAverageAtZ(pipeMask, w_t[j], (Center(), Center(), Face()), (-pipe_top_depth - 0.5*pipe_length), z_grid_spacing)
+end
+#filter
+fs = 1/output_interval
+# num_oscillation = 6
+# fc = (1/num_oscillation) * (1/oscillation_period)
+fc = 1/hour
+averages_filt = filtfilt(digitalfilter(Lowpass(fc, fs = fs), Butterworth(5)), averages_unfilt)
+#plot
+fig = Figure(size = (1000, 600))
+title = "Velocity and Discharge"
+fig[0, :] = Label(fig, title)
+velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
+scatterlines!((times/hour), averages_unfilt, label = "velocity average min", color = :blue, markersize = 5)
+scatterlines!((times/hour), averages_filt, label = "filtered velocity", color = :red, markersize = 0)
+xlims!(0, times[end]/hour)
+fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
+volume_flux_plot= Axis(fig[2, 1], title = "Discharge from filtered velocity & 3d conversion", xlabel="time(hrs)", ylabel = "discharge m^3/s", width =  700)
+volume_flux = averages_filt .* (π*(pipe_radius)^2)
+scatterlines!((times/hour), averages_filt, label = "discharge", color = :green, markersize = 0)
+xlims!(0, times[end]/hour)
+fig[1, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
+fig
+save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
 @info "Finished plotting average values vs time chart"
 
 
