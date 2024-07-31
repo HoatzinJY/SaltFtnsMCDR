@@ -421,7 +421,8 @@ set!(model, T= T_init, S=S_init, w = w_init, A = A_init)
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
 initial_travel_velocity_fake = 0.025 # a number just to set an initial time step, i set it to be around max for safety
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity_fake
-diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, pipeWallThickness, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
+# diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, pipeWallThickness, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
+diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0)
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed)
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
@@ -495,7 +496,7 @@ A_range = getMaxAndMin(num_Data_Points, A_t)
 @info "finished getting max and min of each"
 
 
-#TODO: prototyping some plotting 
+
 
 #plotting the average along the pipe vs time 
 function plotAverages(timeSeriesField, myTimes, locs)
@@ -521,22 +522,19 @@ title = "Averaged Values"
 fig[0, :] = Label(fig, title)
 velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
 plotAverages(w_t, times, (Center(), Center(), Face()))
-xlims!(0, 24)
 fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
 temps_plot = Axis(fig[2,1], title = "Pipe Temperatures Averaged", xlabel="time(hrs)", ylabel = "Temperature(C)", width =  700)
 plotAverages(T_t, times, (Center(), Center(), Center()))
 scatterlines!(times, fill(TWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot,)
 scatterlines!(times, fill(TWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
-xlims!(0, 24)
 fig[2, 2] = Legend(fig, temps_plot, frame_visible = false)
 salinities_plot = Axis(fig[3, 1], title = "Pipe Salinity Averaged", xlabel="time(hrs)", ylabel = "Salinity(ppt)", width =  700)
 plotAverages(S_t, times, (Center(), Center(), Center()))
 scatterlines!(times, fill(SWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot)
 scatterlines!(times, fill(SWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
-xlims!(0, 24)
 fig[3, 2] = Legend(fig, salinities_plot, frame_visible = false)
 fig
-save(pathname * "averaged values vs time.png", fig)
+save(joinpath(pathname,"averaged values vs time.png"), fig)
 @info "Finished plotting average values vs time chart"
 
 
@@ -566,7 +564,7 @@ end
 #This functon returns the discrete index for z, rounding to the nearest one. If the point is perfectly in between two, it returns the lower one 
 function getZIndex(fieldNodes, zCoord)
     for i in 1 : length(fieldNodes[3])
-        if(abs(fieldNodes[3][i] - zCoord) <= (z_grid_spacing/2))
+        if(abs(fieldNodes[3][i] - zCoord) <= 1.01(z_grid_spacing/2)) #1.10 adjusts for some rounding issue with centers 
             return i
         end
     end
@@ -574,13 +572,13 @@ function getZIndex(fieldNodes, zCoord)
 end
 
 #general info
-w_velocity_nodes = nodes(model.grid, (Center(), Center(), Face()), reshape = true)
+w_velocity_nodes = nodes(w_t[1].grid, (Center(), Center(), Face()), reshape = true)
 x_pipe_range_velocities= getPipeXIndexRange(w_velocity_nodes) 
 x_plot_range_velocities = w_velocity_nodes[1][(x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[2] + 4)]#gives a 4 cell halo
 z_index_quarter_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.25 * pipe_length)) 
 z_index_half_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.5 * pipe_length)) 
 z_index_three_quarter_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.75 * pipe_length)) 
-tracer_nodes = nodes(model.grid, (Center(), Center(), Center()), reshape = true)
+tracer_nodes = nodes(T_t[1].grid, (Center(), Center(), Center()), reshape = true)
 x_pipe_range_tracer= getPipeXIndexRange(tracer_nodes) 
 x_plot_range_tracer = tracer_nodes[1][(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[2] + 4)]#gives a 4 cell halo
 z_index_quarter_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.25 * pipe_length)) 
@@ -596,9 +594,9 @@ fig = Figure(size = (700, 600))
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
 fig[0, 1:3] = Label(fig, title)
 cross_velocities_plot= Axis(fig[1,1:2], title = "Pipe Cross Sectional Velocities", xlabel="x (m), centered at pipe center", ylabel = "velocities (m/s)", width =  400)
-scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 3)
-scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 3)
-scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, label = "@ 0.75 pipe", color = colors = :navy, markersize = 3)
+scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 5)
+scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 5)
+scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, label = "@ 0.75 pipe", color = colors = :navy, markersize = 5)
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
 ylims!(-max(abs(w_range[1]), abs(w_range[2])), max(abs(w_range[1]), abs(w_range[2])))
 fig[1, 3] = Legend(fig, cross_velocities_plot, frame_visible = false)
@@ -617,7 +615,7 @@ ylims!(-max(abs(w_range[1]), abs(w_range[2])), max(abs(w_range[1]), abs(w_range[
 fig
 @info "Making cross sectional velocties animation from data"
 frames = 1:length(times)
-record(fig, pathname * "CROSSSECvelocities.mp4", frames, framerate=8) do i
+record(fig, joinpath(pathname,"CROSSSECvelocities.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
@@ -625,17 +623,17 @@ end
 
 #temperatures
 #extract cross sections
-Tₙ_quarter =  @lift interior(T_t[$n], (x_pipe_range[1] - 4):(x_pipe_range[2] + 4) , 1, z_index_quarter_tracer)
-Tₙ_half =  @lift interior(T_t[$n], (x_pipe_range[1] - 4):(x_pipe_range[2] + 4) , 1, z_index_half_tracer)
-Tₙ_three_quarter =  @lift interior(T_t[$n], (x_pipe_range[1] - 4):(x_pipe_range[2] + 4) , 1, z_index_three_quarter_tracer)
+Tₙ_quarter =  @lift interior(T_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[2] + 4) , 1, z_index_quarter_tracer)
+Tₙ_half =  @lift interior(T_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[2] + 4) , 1, z_index_half_tracer)
+Tₙ_three_quarter =  @lift interior(T_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[2] + 4) , 1, z_index_three_quarter_tracer)
 
 fig = Figure(size = (700, 600))
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
 fig[0, 1:3] = Label(fig, title)
 cross_tracer_plot= Axis(fig[1,1:2], title = "Pipe Cross Sectional temperatures", xlabel="x (m), centered at pipe center", ylabel = "Temperature (C)", width =  400)
-scatterlines!((x_plot_range_tracer .- x_center), Tₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 3)
-scatterlines!((x_plot_range_tracer .- x_center), Tₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 3)
-scatterlines!((x_plot_range_tracer .- x_center), Tₙ_three_quarter, label = "@ 0.75 pipe", color = colors = :navy, markersize = 3)
+scatterlines!((x_plot_range_tracer .- x_center), Tₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 5)
+scatterlines!((x_plot_range_tracer .- x_center), Tₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 5)
+scatterlines!((x_plot_range_tracer .- x_center), Tₙ_three_quarter, label = "@ 0.75 pipe", color = colors = :navy, markersize = 5)
 vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
 ylims!(T_range[1], T_range[2])
 fig[1, 3] = Legend(fig, cross_tracer_plot, frame_visible = false)
@@ -650,11 +648,11 @@ ylims!(T_range[1], T_range[2])
 quarterPlot= Axis(fig[2, 3], width = 150, title = "@ 0.75 pipe")
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_three_quarter, color = :navy, markersize = 3)
 vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
-ylims!(-max(abs(w_range[1]), abs(w_range[2])), max(abs(w_range[1]), abs(w_range[2])))
+ylims!(T_range[1], T_range[2])
 fig
 @info "Making cross sectional temperature animation from data"
 frames = 1:length(times)
-record(fig, pathname * "CROSSSECvelocities.mp4", frames, framerate=8) do i
+record(fig, joinpath(pathname, "CROSSSECtemperatures.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
@@ -682,7 +680,7 @@ Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
 fig
 @info "Making properties animation from data"
 frames = 1:length(times)
-record(fig, pathname * "properties.mp4", frames, framerate=8) do i
+record(fig, joinpath(pathname,"properties.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
@@ -710,7 +708,7 @@ Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
 fig
 @info "Making velocities animation from data"
 frames = 1:length(times)
-record(fig, pathname * "velocities.mp4", frames, framerate=8) do i
+record(fig, joinpath(pathname,"velocities.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
@@ -727,7 +725,7 @@ hm_A = heatmap!(ax_A, xA, zA, Aₙ; colorrange=A_colorbar_range, colormap=:matte
 Colorbar(fig[2, 2], hm_A, label="amount")
 frames = 1:length(times)
 @info "Making tracers animation from data"
-record(fig, pathname * "tracer.mp4", frames, framerate=8) do i
+record(fig, joinpath(pathname,"tracer.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
@@ -768,7 +766,7 @@ Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
 fig
 @info "Making velocities animation from data"
 frames = 1:length(times)
-record(fig, pathname * "ZOOMvelocities.mp4", frames, framerate=8) do i
+record(fig, joinpath(pathname,"ZOOMvelocities.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
@@ -787,7 +785,7 @@ ylims!(ax_A, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * p
 Colorbar(fig[2, 2], hm_A, label="amount")
 frames = 1:length(times)
 @info "Making tracers animation from data"
-record(fig, pathname * "ZOOMtracer.mp4", frames, framerate=8) do i
+record(fig, joinpath(pathname,"ZOOMtracer.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
@@ -818,7 +816,7 @@ Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
 fig
 @info "Making properties animation from data"
 frames = 1:length(times)
-record(fig, pathname * "ZOOMproperties.mp4", frames, framerate=8) do i
+record(fig, joinpath(pathname,"ZOOMproperties.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
