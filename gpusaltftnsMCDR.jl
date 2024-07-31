@@ -16,7 +16,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "resolved pipe long 0.00778 res "
+trial_name = "resolved pipe long 0.00778 res"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -33,10 +33,10 @@ output_interval = 1minute
 
 """DOMAIN SIZE & SETUP"""
 const domain_x = 20;
-const domain_z = 20;
-#const domain_z = 300;
+#const domain_z = 20;
+const domain_z = 220;
 const x_center = domain_x/2;
-max_grid_spacing = 0.05; #TODO: figure out what this needs to be set to 
+# max_grid_spacing = 0.05; #TODO: figure out what this needs to be set to 
 
 """PIPE SIZE AND SETUP"""
 struct PipeWallData
@@ -44,10 +44,10 @@ struct PipeWallData
     thickness :: Float64
 end
 const pipe_radius = 0.25
-const pipe_length = 10
-const pipe_top_depth = 4
-# const pipe_length = 200
-# const pipe_top_depth = 50
+# const pipe_length = 10
+# const pipe_top_depth = 4
+const pipe_length = 200
+const pipe_top_depth = 10
 const pipe_wall_thickness_intended = 0.01
 const pipe_bottom_depth = pipe_top_depth + pipe_length
 const wall_material_ρ = 8900
@@ -173,7 +173,7 @@ oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
 #grid spacing desired
-# max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
+max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
 @info @sprintf("Max Grid Spacing: %.3em", max_grid_spacing)
 my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
 my_z_grid_spacing = max_grid_spacing;
@@ -539,6 +539,34 @@ scatterlines!(times, fill(SWaterColumn(-domain_z), length(times)), label = "bott
 fig[3, 2] = Legend(fig, salinities_plot, frame_visible = false)
 fig
 save(joinpath(pathname,"averaged values vs time.png"), fig)
+@info "Finished plotting average values vs time chart"
+
+averages_unfilt = zeros(length(times))
+for j in 1 : length(times)
+    averages_unfilt[j] = getMaskedAverageAtZ(pipeMask, w_t[j], (Center(), Center(), Face()), (-pipe_top_depth - 0.5*pipe_length), z_grid_spacing)
+end
+#filter
+fs = 1/output_interval
+# num_oscillation = 6
+# fc = (1/num_oscillation) * (1/oscillation_period)
+fc = 1/hour
+averages_filt = filtfilt(digitalfilter(Lowpass(fc, fs = fs), Butterworth(5)), averages_unfilt)
+#plot
+fig = Figure(size = (1000, 600))
+title = "Averaged Values"
+fig[0, :] = Label(fig, title)
+velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
+scatterlines!((times/hour), averages_unfilt, label = "velocity average min", color = :blue, markersize = 5)
+scatterlines!((times/hour), averages_filt, label = "filtered velocity", color = :red, markersize = 0)
+xlims!(0, 10)
+fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
+volume_flux_plot= Axis(fig[2, 1], title = "Discharge from filtered velocity & 3d conversion", xlabel="time(hrs)", ylabel = "discharge m^3/s", width =  700)
+volume_flux = averages_filt .* (π*(pipe_radius)^2)
+scatterlines!((times/hour), averages_filt, label = "discharge", color = :green, markersize = 0)
+xlims!(0, 10)
+fig[1, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
+fig
+save(joinpath(pathname," filtered averaged values vs time.png"), fig)
 @info "Finished plotting average values vs time chart"
 
 
