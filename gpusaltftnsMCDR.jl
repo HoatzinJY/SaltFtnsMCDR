@@ -16,7 +16,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "file management and plotting test"
+trial_name = "resolved pipe long 0.00778 res "
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -516,20 +516,24 @@ function plotAverages(timeSeriesField, myTimes, locs)
     scatterlines!((myTimes/hour), average_all, label = "avg entire pipe", color = :red, marker = :cross, markersize = 5)
 end
 
+
 fig = Figure(size = (1000, 600))
 #fig[0, :] = Label(fig, title)
 title = "Averaged Values"
 fig[0, :] = Label(fig, title)
 velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
 plotAverages(w_t, times, (Center(), Center(), Face()))
+xlims!(0, times[end]/hour)
 fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
 temps_plot = Axis(fig[2,1], title = "Pipe Temperatures Averaged", xlabel="time(hrs)", ylabel = "Temperature(C)", width =  700)
 plotAverages(T_t, times, (Center(), Center(), Center()))
+xlims!(0, times[end]/hour)
 scatterlines!(times, fill(TWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot,)
 scatterlines!(times, fill(TWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
 fig[2, 2] = Legend(fig, temps_plot, frame_visible = false)
 salinities_plot = Axis(fig[3, 1], title = "Pipe Salinity Averaged", xlabel="time(hrs)", ylabel = "Salinity(ppt)", width =  700)
 plotAverages(S_t, times, (Center(), Center(), Center()))
+xlims!(0, times[end]/hour)
 scatterlines!(times, fill(SWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot)
 scatterlines!(times, fill(SWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
 fig[3, 2] = Legend(fig, salinities_plot, frame_visible = false)
