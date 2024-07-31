@@ -553,7 +553,7 @@ fc = 1/hour
 averages_filt = filtfilt(digitalfilter(Lowpass(fc, fs = fs), Butterworth(5)), averages_unfilt)
 #plot
 fig = Figure(size = (1000, 600))
-title = "Averaged Values"
+title = "Velocity and Discharge"
 fig[0, :] = Label(fig, title)
 velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
 scatterlines!((times/hour), averages_unfilt, label = "velocity average min", color = :blue, markersize = 5)
@@ -566,7 +566,7 @@ scatterlines!((times/hour), averages_filt, label = "discharge", color = :green, 
 xlims!(0, 10)
 fig[1, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
 fig
-save(joinpath(pathname," filtered averaged values vs time.png"), fig)
+save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
 @info "Finished plotting average values vs time chart"
 
 
