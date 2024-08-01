@@ -565,7 +565,7 @@ volume_flux_plot= Axis(fig[2, 1], title = "Discharge from filtered velocity & 3d
 volume_flux = averages_filt .* (π*(pipe_radius)^2)
 scatterlines!((times/hour), averages_filt, label = "discharge", color = :green, markersize = 0)
 xlims!(0, times[end]/hour)
-fig[1, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
+fig[2, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
 fig
 save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
 @info "Finished plotting average values vs time chart"

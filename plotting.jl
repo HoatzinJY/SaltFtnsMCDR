@@ -175,8 +175,6 @@ z_res = floor(Int, domain_z / my_z_grid_spacing);
 #grid spacing adjusted to be divisible in domain_grid
 const x_grid_spacing = domain_x/x_res;
 const z_grid_spacing = domain_z/z_res;
-#call error if it is too large for model
-checkMemory(GPU_memory, x_res, z_res)
 #pipe wall thickness, as set by the model
 const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 @info @sprintf("Pipe walls are %.3e meters thick", pipe_wall_thickness)
@@ -331,6 +329,14 @@ A_range = getMaxAndMin(num_Data_Points, A_t)
 
 
 
+
+
+
+
+
+
+
+
 #plotting the average along the pipe vs time 
 function plotAverages(timeSeriesField, myTimes, locs)
     averages = zeros(length(myTimes))
@@ -399,10 +405,10 @@ volume_flux_plot= Axis(fig[2, 1], title = "Discharge from filtered velocity & 3d
 volume_flux = averages_filt .* (π*(pipe_radius)^2)
 scatterlines!((times/hour), averages_filt, label = "discharge", color = :green, markersize = 0)
 xlims!(0, times[end]/hour)
-fig[1, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
+fig[2, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
 fig
 save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
-@info "Finished plotting average values vs time chart"
+@info "Finished plotting filtered velocities vs time chart"
 
 
 """PLOTTING CROSS SECTIONAL STUFF VS TIME""" 
