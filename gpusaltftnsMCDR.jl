@@ -17,7 +17,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "resolved pipe 0.00778 res 15m domx 20m pipe long run"
+trial_name = "resolved pipe 0.00778 res 15m domx 10mL 0.1R 10xgrad"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -29,12 +29,12 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 1day #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
-run_duration = 55hour
-output_interval = 1.5minute
+run_duration = 1.5hour
+output_interval = 1
 
 """DOMAIN SIZE & SETUP"""
 const domain_x = 15;
-const domain_z = 30; 
+const domain_z = 20; 
 # const domain_z = 220; #BIG
 const x_center = domain_x/2;
 # max_grid_spacing = 0.05; #TODO: figure out what this needs to be set to 
@@ -45,7 +45,7 @@ struct PipeWallData
     thickness :: Float64
 end
 const pipe_radius = 0.1
-const pipe_length = 20
+const pipe_length = 10
 const pipe_top_depth = 5
 # const pipe_length = 200 #BIG
 # const pipe_top_depth = 10 #BIG
@@ -81,7 +81,7 @@ const T_top = 21.67;
 const T_bot = 11.86;
 const S_bot = 34.18;
 const S_top = 35.22;
-const delta_z = 200; 
+const delta_z = 20; 
 
 function TWaterColumn(z)
     if (z > -pipe_top_depth)
@@ -472,33 +472,33 @@ run!(simulation; pickup=false)
 output_filename = filename * ".jld2"
 u_t = FieldTimeSeries(output_filename, "u")
 w_t = FieldTimeSeries(output_filename, "w")
-#ζ_t = FieldTimeSeries(output_filename, "ζ")
+ζ_t = FieldTimeSeries(output_filename, "ζ")
 T_t = FieldTimeSeries(output_filename, "T")
 S_t = FieldTimeSeries(output_filename, "S")
-#ρ_t = FieldTimeSeries(output_filename, "ρ")
-#A_t = FieldTimeSeries(output_filename, "A")
+ρ_t = FieldTimeSeries(output_filename, "ρ")
+A_t = FieldTimeSeries(output_filename, "A")
 times = u_t.times
 n = Observable(1)
 Observable(1)
 @info @sprintf("Finished extracting time series. Simulation total run time %.3f seconds | %.3f minutes", times[end], times[end]/minute)
 uₙ = @lift interior(u_t[$n], :, 1, :)
 wₙ = @lift interior(w_t[$n], :, 1, :)
-#ζₙ = @lift interior(ζ_t[$n], :, 1, :)
+ζₙ = @lift interior(ζ_t[$n], :, 1, :)
 Tₙ = @lift interior(T_t[$n], :, 1, :)
 Sₙ = @lift interior(S_t[$n], :, 1, :)
-#ρₙ = @lift interior(ρ_t[$n], :, 1, :)
-# Aₙ = @lift interior(A_t[$n], :, 1, :)
+ρₙ = @lift interior(ρ_t[$n], :, 1, :)
+Aₙ = @lift interior(A_t[$n], :, 1, :)
 
 #how much of data set to plot 
 num_Data_Points = length(times)
 #very inefficient way of getting max/min, need to update
 T_range = getMaxAndMin(num_Data_Points, T_t)
 S_range = getMaxAndMin(num_Data_Points, S_t)
-# ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
+ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
 u_range = getMaxAndMin(num_Data_Points, u_t)
 w_range = getMaxAndMin(num_Data_Points, w_t)
-# ζ_range = getMaxAndMin(num_Data_Points, ζ_t)
-# A_range = getMaxAndMin(num_Data_Points, A_t)
+ζ_range = getMaxAndMin(num_Data_Points, ζ_t)
+A_range = getMaxAndMin(num_Data_Points, A_t)
 @info "finished getting max and min of each"
 
 
@@ -577,6 +577,7 @@ save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
 
 
 """PLOTTING CROSS SECTIONAL STUFF VS TIME""" 
+#returns indexes on side of pipe INSIDE OF PIPE 
 function getPipeXIndexRange(fieldNodes)
     leftIndex = -1
     rightIndex = -1
@@ -653,17 +654,17 @@ ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]
 fig[1, 3] = Legend(fig, cross_velocities_plot, frame_visible = false)
 quarterPlot= Axis(fig[2, 1], width = 150, title = "@ 0.25 pipe")
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, color = :lightblue, markersize = 3)
-vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]-1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
 quarterPlot= Axis(fig[2, 2], width = 150, title = "@ 0.5 pipe")
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, color = :blue, markersize = 3)
-vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]-1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
 quarterPlot= Axis(fig[2, 3], width = 150, title = "@ 0.75 pipe")
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, color = :navy, markersize = 3)
-vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]-1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
 fig
@@ -727,11 +728,11 @@ xS, yS, zS = nodes(S_t[1])
 ax_S = Axis(fig[3, 1]; title="salinity[ppt]", axis_kwargs...)
 hm_S = heatmap!(ax_S, xS, zS, Sₙ; colorrange=S_range, colormap=:haline) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[3, 2], hm_S, label="ppt")
-# xρ, yρ, zρ = nodes(ρ_t[1])
-# ax_ρ = Axis(fig[4, 1]; title="potential density[kg/m^3]", axis_kwargs...)
-# hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=Reverse(:viridis)) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-# Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
-# fig
+xρ, yρ, zρ = nodes(ρ_t[1])
+ax_ρ = Axis(fig[4, 1]; title="potential density[kg/m^3]", axis_kwargs...)
+hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=Reverse(:viridis)) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
+fig
 @info "Making properties animation from data"
 frames = 1:length(times)
 record(fig, joinpath(pathname,"properties.mp4"), frames, framerate=8) do i
@@ -754,11 +755,11 @@ ax_u = Axis(fig[3, 1]; title="u velocity", axis_kwargs...)
 u_colorbar_range = (-max(abs(u_range[1]), abs(u_range[2])), max(abs(u_range[1]), abs(u_range[2])))
 hm_u = heatmap!(ax_u, xu, zu, uₙ; colorrange=u_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 Colorbar(fig[3, 2], hm_u, label="m/s")
-# xζ, yζ, zζ = nodes(ζ_t[1])
-# ax_ζ = Axis(fig[4, 1]; title="vorticity", axis_kwargs...)
-# ζ_colorbar_range = (-max(abs(ζ_range[1]), abs(ζ_range[2])), max(abs(ζ_range[1]), abs(ζ_range[2])))
-# hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-# Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
+xζ, yζ, zζ = nodes(ζ_t[1])
+ax_ζ = Axis(fig[4, 1]; title="vorticity", axis_kwargs...)
+ζ_colorbar_range = (-max(abs(ζ_range[1]), abs(ζ_range[2])), max(abs(ζ_range[1]), abs(ζ_range[2])))
+hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
 fig
 @info "Making velocities animation from data"
 frames = 1:length(times)
@@ -768,22 +769,22 @@ record(fig, joinpath(pathname,"velocities.mp4"), frames, framerate=8) do i
 end
 
 #other tracer
-# fig = Figure(size=(600, 300))
-# title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
-# axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
-# fig[1, :] = Label(fig, title)
-# xA, yA, zA = nodes(A_t[1])
-# ax_A = Axis(fig[2, 1]; title="tracer A", axis_kwargs...)
-# A_colorbar_range = (A_range)
-# hm_A = heatmap!(ax_A, xA, zA, Aₙ; colorrange=A_colorbar_range, colormap=:matter) 
-# Colorbar(fig[2, 2], hm_A, label="amount")
-# frames = 1:length(times)
-# @info "Making tracers animation from data"
-# record(fig, joinpath(pathname,"tracer.mp4"), frames, framerate=8) do i
-#     @info string("Plotting frame ", i, " of ", frames[end])
-#     n[] = i
-# end
-# @info @sprintf("Done. Simulation total run time %.3f seconds | %.3f minutes", times[end], times[end]/minute)
+fig = Figure(size=(600, 300))
+title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
+axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
+fig[1, :] = Label(fig, title)
+xA, yA, zA = nodes(A_t[1])
+ax_A = Axis(fig[2, 1]; title="tracer A", axis_kwargs...)
+A_colorbar_range = (A_range)
+hm_A = heatmap!(ax_A, xA, zA, Aₙ; colorrange=A_colorbar_range, colormap=:matter) 
+Colorbar(fig[2, 2], hm_A, label="amount")
+frames = 1:length(times)
+@info "Making tracers animation from data"
+record(fig, joinpath(pathname,"tracer.mp4"), frames, framerate=8) do i
+    @info string("Plotting frame ", i, " of ", frames[end])
+    n[] = i
+end
+@info @sprintf("Done. Simulation total run time %.3f seconds | %.3f minutes", times[end], times[end]/minute)
 
 
 
@@ -810,13 +811,13 @@ hm_u = heatmap!(ax_u, xu, zu, uₙ; colorrange=u_colorbar_range, colormap=:balan
 xlims!(ax_u,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
 ylims!(ax_u, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
 Colorbar(fig[3, 2], hm_u, label="m/s")
-# xζ, yζ, zζ = nodes(ζ_t[1])
-# ax_ζ = Axis(fig[4, 1]; title="vorticity", axis_kwargs...)
-# ζ_colorbar_range = (-max(abs(ζ_range[1]), abs(ζ_range[2])), max(abs(ζ_range[1]), abs(ζ_range[2])))
-# hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-# xlims!(ax_ζ,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
-# ylims!(ax_ζ, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
-# Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
+xζ, yζ, zζ = nodes(ζ_t[1])
+ax_ζ = Axis(fig[4, 1]; title="vorticity", axis_kwargs...)
+ζ_colorbar_range = (-max(abs(ζ_range[1]), abs(ζ_range[2])), max(abs(ζ_range[1]), abs(ζ_range[2])))
+hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+xlims!(ax_ζ,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
+ylims!(ax_ζ, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
+Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
 fig
 @info "Making velocities animation from data"
 frames = 1:length(times)
@@ -826,23 +827,23 @@ record(fig, joinpath(pathname,"ZOOMvelocities.mp4"), frames, framerate=8) do i
 end
 
 #tracers
-# fig = Figure(size=(600, 300))
-# title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
-# axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=150)
-# fig[1, :] = Label(fig, title)
-# xA, yA, zA = nodes(A_t[1])
-# ax_A = Axis(fig[2, 1]; title="tracer A", axis_kwargs...)
-# A_colorbar_range = (A_range)
-# hm_A = heatmap!(ax_A, xA, zA, Aₙ; colorrange=A_colorbar_range, colormap=:matter) 
-# xlims!(ax_A,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
-# ylims!(ax_A, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
-# Colorbar(fig[2, 2], hm_A, label="amount")
-# frames = 1:length(times)
-# @info "Making tracers animation from data"
-# record(fig, joinpath(pathname,"ZOOMtracer.mp4"), frames, framerate=8) do i
-#     @info string("Plotting frame ", i, " of ", frames[end])
-#     n[] = i
-# end
+fig = Figure(size=(600, 300))
+title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
+axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=150)
+fig[1, :] = Label(fig, title)
+xA, yA, zA = nodes(A_t[1])
+ax_A = Axis(fig[2, 1]; title="tracer A", axis_kwargs...)
+A_colorbar_range = (A_range)
+hm_A = heatmap!(ax_A, xA, zA, Aₙ; colorrange=A_colorbar_range, colormap=:matter) 
+xlims!(ax_A,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
+ylims!(ax_A, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
+Colorbar(fig[2, 2], hm_A, label="amount")
+frames = 1:length(times)
+@info "Making tracers animation from data"
+record(fig, joinpath(pathname,"ZOOMtracer.mp4"), frames, framerate=8) do i
+    @info string("Plotting frame ", i, " of ", frames[end])
+    n[] = i
+end
 
 #properties
 fig = Figure(size=(600, 900))
@@ -861,12 +862,12 @@ hm_S = heatmap!(ax_S, xS, zS, Sₙ; colorrange=S_range, colormap=:haline) #note 
 xlims!(ax_S,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
 ylims!(ax_S, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
 Colorbar(fig[3, 2], hm_S, label="ppt")
-# xρ, yρ, zρ = nodes(ρ_t[1])
-# ax_ρ = Axis(fig[4, 1]; title="potential density[kg/m^3]", axis_kwargs...)
-# hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=Reverse(:viridis)) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-# xlims!(ax_ρ,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
-# ylims!(ax_ρ, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
-# Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
+xρ, yρ, zρ = nodes(ρ_t[1])
+ax_ρ = Axis(fig[4, 1]; title="potential density[kg/m^3]", axis_kwargs...)
+hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=Reverse(:viridis)) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+xlims!(ax_ρ,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
+ylims!(ax_ρ, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
+Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
 fig
 @info "Making properties animation from data"
 frames = 1:length(times)
