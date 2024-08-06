@@ -17,7 +17,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "resolved 20mL 0.1mR 1e-5Kt"
+trial_name = "0.01res 20mL 0.1mR 1e-5Kt neutral start"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -29,7 +29,7 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 1day #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
-run_duration = 12hour
+run_duration = 5minute
 output_interval = 1minute
 
 """DOMAIN SIZE & SETUP"""
@@ -79,10 +79,10 @@ const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T
 """SET BACKGROUND TEMPERATURE AND SALINITY GRADIENTS"""
 const T_top = 21.67;
 const T_bot = 11.86;
-const S_bot = 34.18;
-const S_top = 35.22;
 # const S_bot = 34.18;
-# const S_top = 36.601543;
+# const S_top = 35.22;
+const S_bot = 34.18;
+const S_top = 36.601543;
 const delta_z = 200; 
 
 function TWaterColumn(z)
@@ -177,7 +177,8 @@ oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
 #grid spacing desired
-max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
+max_grid_spacing = 0.015
+#max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
 @info @sprintf("Max Grid Spacing: %.3em", max_grid_spacing)
 my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
 my_z_grid_spacing = max_grid_spacing;
@@ -315,32 +316,32 @@ tracerRelaxationMaskDomainThree(x, z) = tracerRelaxationMaskDomainThree(x, 0, z)
 
 """INITIAL CONDITIONS"""
 #this function for some reason does not work, calculates a gradient that is too large 
-# function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Function, Tfunc::Function)
-#     eos = TEOS10EquationOfState()
-#     p_bot = p_top + p_length
-#     #get reference values at pipe bottom
-#     ρ₀ = getBackgroundDensity(-p_bot, Tfunc, Sfunc)
-#     #get average background density & thermal expansion coeff
-#     z = -p_bot
-#     density_tot = 0
-#     count = 0
-#     α_tot = 0
-#     while (z <= -p_top)
-#         density_tot += getBackgroundDensity(z, Tfunc, Sfunc)
-#         S_abs = gsw_sa_from_sp(Sfunc(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
-#         α_tot += SeawaterPolynomials.thermal_expansion(gsw_ct_from_t(S_abs, Tfunc(0, z), gsw_p_from_z(z, 30)), S_abs, z, TEOS10EquationOfState())#set to 30 degrees north
-#         z += grid_size
-#         count += 1
-#     end
-#          ρ_wc_avg = density_tot/count
-#     α_avg = α_tot/count   
-#     #calculate and return the pipe gradient for roughly neutral buoayncy, in the form dt/dz
-#     return (2*(ρ₀ - ρ_wc_avg))/(α_avg * 1000 * p_length)
-# end 
+function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Function, Tfunc::Function)
+    eos = TEOS10EquationOfState()
+    p_bot = p_top + p_length
+    #get reference values at pipe bottom
+    ρ₀ = getBackgroundDensity(-p_bot, Tfunc, Sfunc)
+    #get average background density & thermal expansion coeff
+    z = -p_bot
+    density_tot = 0
+    count = 0
+    α_tot = 0
+    while (z <= -p_top)
+        density_tot += getBackgroundDensity(z, Tfunc, Sfunc)
+        S_abs = gsw_sa_from_sp(Sfunc(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
+        α_tot += SeawaterPolynomials.thermal_expansion(gsw_ct_from_t(S_abs, Tfunc(0, z), gsw_p_from_z(z, 30)), S_abs, z, TEOS10EquationOfState())#set to 30 degrees north
+        z += grid_size
+        count += 1
+    end
+         ρ_wc_avg = density_tot/count
+    α_avg = α_tot/count   
+    #calculate and return the pipe gradient for roughly neutral buoayncy, in the form dt/dz
+    return ((ρ₀ - ρ_wc_avg))/(α_avg * 1000 * p_length)
+end 
 
-# const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, z_grid_spacing, SWaterColumn, TWaterColumn)
+const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, z_grid_spacing, SWaterColumn, TWaterColumn)
 
-const pipeTGrad = 0.0345
+# const pipeTGrad = 0.0345
 
 function T_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
@@ -349,7 +350,7 @@ function T_init(x, y, z)
         return TWaterColumn(-pipe_top_depth) + (pipeTGrad * (z + pipe_top_depth))
     else
         return TWaterColumn(z)
-    end 
+    end
 end
 
 #fully equillibriated 
@@ -943,6 +944,10 @@ end
 
 #plot lines showing velocity at different heights
 #plot bar showing average flux through pipe
+
+
+
+
 
 
 
