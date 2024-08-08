@@ -17,7 +17,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "0.01res 20mL 0.1mR 1e-5Kt neutral start"
+trial_name = "0.001res 1mL 0.025mR 1e-7Kt neutral start 9minN long"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -28,13 +28,13 @@ trial_name = "0.01res 20mL 0.1mR 1e-5Kt neutral start"
 const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
-simulation_duration = 1day #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
-run_duration = 5minute
-output_interval = 1minute
+simulation_duration = 6hour #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
+run_duration = 13hour
+output_interval = 1
 
 """DOMAIN SIZE & SETUP"""
-const domain_x = 15;
-const domain_z = 30; 
+const domain_x = 0.8;
+const domain_z = 2; 
 # const domain_z = 220; #BIG
 const x_center = domain_x/2;
 #max_grid_spacing = 0.02; #TODO: figure out what this needs to be set to 
@@ -44,9 +44,9 @@ struct PipeWallData
     thermal_diffusivity :: Float64
     thickness :: Float64
 end
-const pipe_radius = 0.1
-const pipe_length = 20
-const pipe_top_depth = 5
+const pipe_radius = 0.025
+const pipe_length = 1
+const pipe_top_depth = 0.5
 # const pipe_length = 200 #BIG
 # const pipe_top_depth = 10 #BIG
 const pipe_wall_thickness_intended = 0.01
@@ -70,8 +70,8 @@ end
 const eddy_horizontal_diffusivity = 5e2 #not used
 const eddy_vertical_diffusivity = 1e-5 #not used
 const sw_viscosity_molecular = 1.05e-6
-#const sw_T_diffusivity_molecular = 1.46e-7
-const sw_T_diffusivity_molecular = 1e-5 # as per the experimental data in papers Zhang 2004
+const sw_T_diffusivity_molecular = 1.46e-7
+#const sw_T_diffusivity_molecular = 1e-5 # as per the experimental data in papers Zhang 2004
 const sw_S_diffusivity_molecular = 1.3e-9
 const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
 
@@ -79,10 +79,10 @@ const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T
 """SET BACKGROUND TEMPERATURE AND SALINITY GRADIENTS"""
 const T_top = 21.67;
 const T_bot = 11.86;
-# const S_bot = 34.18;
-# const S_top = 35.22;
 const S_bot = 34.18;
-const S_top = 36.601543;
+const S_top = 35.22;
+# const S_bot = 34.18;
+# const S_top = 36.601543;
 const delta_z = 200; 
 
 function TWaterColumn(z)
@@ -123,6 +123,11 @@ function getMaxAndMin(numPoints, dataSeries)
         myMax = max(maximum(interior(dataSeries[i], :, 1, :)),myMax )
         myMin = min(minimum(interior(dataSeries[i], :, 1, :)), myMin)
     end
+    return (myMin, myMax)
+end
+function getMaxAndMinEnd(dataSeries)
+    myMax = maximum(interior(dataSeries[end], : , 1, :))
+    myMin = minimum(interior(dataSeries[end], : , 1, :))
     return (myMin, myMax)
 end
 function getMaskedAverage(mask::Function, field, locs)
@@ -177,7 +182,7 @@ oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
 #grid spacing desired
-max_grid_spacing = 0.015
+max_grid_spacing = 0.001
 #max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
 @info @sprintf("Max Grid Spacing: %.3em", max_grid_spacing)
 my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
@@ -339,9 +344,9 @@ function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Funct
     return ((ρ₀ - ρ_wc_avg))/(α_avg * 1000 * p_length)
 end 
 
-const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, z_grid_spacing, SWaterColumn, TWaterColumn)
+#const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, z_grid_spacing, SWaterColumn, TWaterColumn)
 
-# const pipeTGrad = 0.0345
+const pipeTGrad = 0.0345
 
 function T_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
@@ -534,6 +539,7 @@ run!(simulation; pickup=false)
 #visualize simulation
 #visualize simulation
 output_filename = filename * ".jld2"
+
 u_t = FieldTimeSeries(output_filename, "u")
 w_t = FieldTimeSeries(output_filename, "w")
 ζ_t = FieldTimeSeries(output_filename, "ζ")
@@ -555,14 +561,24 @@ Aₙ = @lift interior(A_t[$n], :, 1, :)
 
 #how much of data set to plot 
 num_Data_Points = length(times)
+
+
+
 #very inefficient way of getting max/min, need to update
-T_range = getMaxAndMin(num_Data_Points, T_t)
-S_range = getMaxAndMin(num_Data_Points, S_t)
-ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
-u_range = getMaxAndMin(num_Data_Points, u_t)
-w_range = getMaxAndMin(num_Data_Points, w_t)
-ζ_range = getMaxAndMin(num_Data_Points, ζ_t)
-A_range = getMaxAndMin(num_Data_Points, A_t)
+T_range = getMaxAndMinEnd(T_t)
+S_range = getMaxAndMinEnd(S_t)
+ρ_range = getMaxAndMinEnd(ρ_t)
+u_range = getMaxAndMinEnd(u_t)
+w_range = getMaxAndMinEnd(w_t)
+ζ_range = getMaxAndMinEnd(ζ_t)
+A_range = getMaxAndMinEnd(A_t)
+# T_range = getMaxAndMin(num_Data_Points, T_t)
+# S_range = getMaxAndMin(num_Data_Points, S_t)
+# ρ_range = getMaxAndMin(num_Data_Points, ρ_t)
+# u_range = getMaxAndMin(num_Data_Points, u_t)
+# w_range = getMaxAndMin(num_Data_Points, w_t)
+# ζ_range = getMaxAndMin(num_Data_Points, ζ_t)
+# A_range = getMaxAndMin(num_Data_Points, A_t)
 @info "finished getting max and min of each"
 
 
@@ -706,27 +722,31 @@ end
 w_pipe_range = getMaxAndMinInPipe(num_Data_Points, w_t, (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[2] + 4), (getZIndex(w_velocity_nodes, -pipe_bottom_depth)):(getZIndex(w_velocity_nodes, -pipe_top_depth)))
 
 fig = Figure(size = (700, 600))
+myTicksBIG = -pipe_radius : pipe_radius/10: pipe_radius
+myTicksSMALL = -pipe_radius : pipe_radius/5: pipe_radius
+kwargsBIG = (; xminorticks = myTicksBIG, xminorticksvisible = true, xminorgridvisible = true)
+kwargs =(; xminorticks = myTicksSMALL, xminorticksvisible = true, xminorgridvisible = true)
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
 fig[0, 1:3] = Label(fig, title)
-cross_velocities_plot= Axis(fig[1,1:2], title = "Pipe Cross Sectional Velocities", xlabel="x (m), centered at pipe center", ylabel = "velocities (m/s)", width =  400)
+cross_velocities_plot= Axis(fig[1,1:2], title = "Pipe Cross Sectional Velocities", xlabel="x (m), centered at pipe center", ylabel = "velocities (m/s)", width =  400; kwargsBIG...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 5)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 5)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, label = "@ 0.75 pipe", color = colors = :navy, markersize = 5)
-vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
 fig[1, 3] = Legend(fig, cross_velocities_plot, frame_visible = false)
-quarterPlot= Axis(fig[2, 1], width = 150, title = "@ 0.25 pipe")
+quarterPlot= Axis(fig[2, 1], width = 150, title = "@ 0.25 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, color = :lightblue, markersize = 3)
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]-1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
-quarterPlot= Axis(fig[2, 2], width = 150, title = "@ 0.5 pipe")
+quarterPlot= Axis(fig[2, 2], width = 150, title = "@ 0.5 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, color = :blue, markersize = 3)
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]-1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
-quarterPlot= Axis(fig[2, 3], width = 150, title = "@ 0.75 pipe")
+quarterPlot= Axis(fig[2, 3], width = 150, title = "@ 0.75 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, color = :navy, markersize = 3)
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]-1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
@@ -753,20 +773,20 @@ cross_tracer_plot= Axis(fig[1,1:2], title = "Pipe Cross Sectional temperatures",
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 5)
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 5)
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_three_quarter, label = "@ 0.75 pipe", color = colors = :navy, markersize = 5)
-vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
+vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]-1] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
 ylims!(T_range[1], T_range[2])
 fig[1, 3] = Legend(fig, cross_tracer_plot, frame_visible = false)
 quarterPlot= Axis(fig[2, 1], width = 150, title = "@ 0.25 pipe")
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_quarter, color = :lightblue, markersize = 3)
-vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]-1] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(T_range[1], T_range[2])
 quarterPlot= Axis(fig[2, 2], width = 150, title = "@ 0.5 pipe")
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_half, color = :blue, markersize = 3)
-vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]-1] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(T_range[1], T_range[2])
 quarterPlot= Axis(fig[2, 3], width = 150, title = "@ 0.75 pipe")
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_three_quarter, color = :navy, markersize = 3)
-vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]-1] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(T_range[1], T_range[2])
 fig
 @info "Making cross sectional temperature animation from data"
