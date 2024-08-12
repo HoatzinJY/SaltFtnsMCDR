@@ -17,7 +17,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "0.001res 1mL 0.025mR 1e-7Kt neutral start 9minN long"
+trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN 0.7m diffforcing"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -28,12 +28,12 @@ trial_name = "0.001res 1mL 0.025mR 1e-7Kt neutral start 9minN long"
 const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
-simulation_duration = 6hour #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
-run_duration = 13hour
-output_interval = 1
+simulation_duration = 1hour #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
+run_duration = 30minute
+output_interval = 10
 
 """DOMAIN SIZE & SETUP"""
-const domain_x = 0.8;
+const domain_x = 0.7;
 const domain_z = 2; 
 # const domain_z = 220; #BIG
 const x_center = domain_x/2;
@@ -44,7 +44,7 @@ struct PipeWallData
     thermal_diffusivity :: Float64
     thickness :: Float64
 end
-const pipe_radius = 0.025
+const pipe_radius = 0.02
 const pipe_length = 1
 const pipe_top_depth = 0.5
 # const pipe_length = 200 #BIG
@@ -260,6 +260,14 @@ function pipeWallMask(x,z)
         return 0
     end
 end
+function pipeWallVelocityMask(x, z)
+    if (!isInsidePipe(x, z) && ((-pipe_bottom_depth) < z < (-pipe_top_depth)) && !isSidePipe(x, z))
+        return 1
+    else
+        return 0
+    end
+end
+
 function isSidePipeWall(x, z)
     left_wall_range = (pipe_radius) .. (pipe_radius + pipe_wall_thickness)
     right_wall_range = (domain_x - pipe_radius - pipe_wall_thickness) .. (domain_x - pipe_radius)
@@ -318,6 +326,7 @@ sidePipeWallMask(x, y, z) = sidePipeWallMask(x, z)
 tracerRelaxationMaskDomainTwo(x, z) = tracerRelaxationMaskDomainTwo(x, 0, z)
 velocityRelaxationMaskDomainOne(x, z) = velocityRelaxationMaskDomainOne(x, 0, z)
 tracerRelaxationMaskDomainThree(x, z) = tracerRelaxationMaskDomainThree(x, 0, z)
+pipeWallVelocityMask(x, y, z) = pipeWallVelocitymask(x, z)
 
 """INITIAL CONDITIONS"""
 #this function for some reason does not work, calculates a gradient that is too large 
@@ -472,12 +481,12 @@ S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gr
 boundary_conditions = (T = T_bcs, S = S_bcs)
 
 #TODO: combine these when set 
-uw_pipe_wall_forcer = Relaxation(rate = max_relaxation_rate, mask = pipeWallMask)
+#uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = velocityRelaxationMaskDomainOne)
+uw_pipe_wall_forcer = Relaxation(rate = max_relaxation_rate, mask = pipeWallVelocityMask)
 T_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = TWaterColumnTarget)
 S_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = SWaterColumnTarget)
 #S_side_forcer = Relaxation(rate = max_relaxation_rate, mask = sidePipeMask, target = SWaterColumn(-pipe_top_depth))
-uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = velocityRelaxationMaskDomainOne)
-forcing = (u = (uw_pipe_wall_forcer, uw_domain_forcer),  w = (uw_pipe_wall_forcer, uw_domain_forcer), T = (T_domain_forcer), S = (S_domain_forcer))
+forcing = (u = (uw_pipe_wall_forcer),  w = (uw_pipe_wall_forcer), T = (T_domain_forcer), S = (S_domain_forcer))
 
 model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing, boundary_conditions)
 
@@ -533,13 +542,11 @@ filename = joinpath(pathname, "data")
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A); filename, schedule=TimeInterval(output_interval), overwrite_existing=true) #can also set to TimeInterval
 
 
-#run simulation
-run!(simulation; pickup=false)
+run!(simulation, pickup = false)
 
 #visualize simulation
 #visualize simulation
 output_filename = filename * ".jld2"
-
 u_t = FieldTimeSeries(output_filename, "u")
 w_t = FieldTimeSeries(output_filename, "w")
 ζ_t = FieldTimeSeries(output_filename, "ζ")
@@ -657,27 +664,41 @@ save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
 
 
 """PLOTTING CROSS SECTIONAL STUFF VS TIME""" 
-#returns indexes on side of pipe INSIDE OF PIPE 
-function getPipeXIndexRange(fieldNodes)
-    leftIndex = -1
-    rightIndex = -1
+#returns indexes [first index of left wall, first index of pipe, last index of pipe, last index of right wall]
+function getPipeAndWallXIndexRange(fieldNodes)
+    leftWallIndex = -1
+    rightWallIndex = -1
+    leftPipeIndex = -1
+    rightPipeIndex = -1
     z_center_index = ceil(Int, length(fieldNodes[3])/2)
     edgedetector = 0;
+    count = 0
     for i in 1 : length(fieldNodes[1])
-        if (pipeMask(fieldNodes[1][i], fieldNodes[3][z_center_index]) != edgedetector)
+        if (pipeWallMask(fieldNodes[1][i], fieldNodes[3][z_center_index]) != edgedetector)
             if (edgedetector == 0)
-                leftIndex = i
+                count += 1
+                if (count == 1)
+                    leftWallIndex = i
+                else
+                    rightPipeIndex = i - 1
+                end
                 edgedetector = 1
             else 
-                rightIndex = i -1
-                break;
+                count += 1
+                if (count == 4)
+                    rightIndex = i - 1
+                    break;
+                else
+                    leftPipeIndex = i 
+                end
+                edgedetector = 0
             end
         end
     end
-    if (leftIndex == -1 || rightIndex == -1)
+    if (leftWallIndex == -1 || rightWallIndex == -1 || leftPipeIndex == -1 || rightPipeIndex == -1)
         throw("pipe side walls not found")
     else
-        return [leftIndex, rightIndex]
+        return [leftWallIndex, leftPipeIndex, rightPipeIndex, righWallIndex]
     end
 end 
 #This functon returns the discrete index for z, rounding to the nearest one. If the point is perfectly in between two, it returns the lower one 
@@ -692,22 +713,22 @@ end
 
 #general info
 w_velocity_nodes = nodes(w_t[1].grid, (Center(), Center(), Face()), reshape = true)
-x_pipe_range_velocities= getPipeXIndexRange(w_velocity_nodes) 
-x_plot_range_velocities = w_velocity_nodes[1][(x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[2] + 4)]#gives a 4 cell halo
+x_pipe_range_velocities= getPipeAndWallXIndexRange(w_velocity_nodes) 
+x_plot_range_velocities = w_velocity_nodes[1][(x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4)]#gives a 4 cell halo
 z_index_quarter_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.25 * pipe_length)) 
 z_index_half_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.5 * pipe_length)) 
 z_index_three_quarter_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.75 * pipe_length)) 
 tracer_nodes = nodes(T_t[1].grid, (Center(), Center(), Center()), reshape = true)
-x_pipe_range_tracer= getPipeXIndexRange(tracer_nodes) 
-x_plot_range_tracer = tracer_nodes[1][(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[2] + 4)]#gives a 4 cell halo
+x_pipe_range_tracer= getPipeAndWallXIndexRange(tracer_nodes) 
+x_plot_range_tracer = tracer_nodes[1][(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4)]#gives a 4 cell halo
 z_index_quarter_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.25 * pipe_length)) 
 z_index_half_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.5 * pipe_length)) 
 z_index_three_quarter_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.75 * pipe_length)) 
 
 #extract cross sections
-wₙ_quarter =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[2] + 4) , 1, z_index_quarter_velocities)
-wₙ_half =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[2] + 4) , 1, z_index_half_velocities)
-wₙ_three_quarter =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[2] + 4) , 1, z_index_three_quarter_velocities)
+wₙ_quarter =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_quarter_velocities)
+wₙ_half =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_half_velocities)
+wₙ_three_quarter =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_three_quarter_velocities)
 
 #get max and min in pipe
 function getMaxAndMinInPipe(numPoints, dataSeries, x_range::UnitRange, z_range::UnitRange)
@@ -722,33 +743,33 @@ end
 w_pipe_range = getMaxAndMinInPipe(num_Data_Points, w_t, (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[2] + 4), (getZIndex(w_velocity_nodes, -pipe_bottom_depth)):(getZIndex(w_velocity_nodes, -pipe_top_depth)))
 
 fig = Figure(size = (700, 600))
-myTicksBIG = -pipe_radius : pipe_radius/10: pipe_radius
-myTicksSMALL = -pipe_radius : pipe_radius/5: pipe_radius
-kwargsBIG = (; xminorticks = myTicksBIG, xminorticksvisible = true, xminorgridvisible = true)
-kwargs =(; xminorticks = myTicksSMALL, xminorticksvisible = true, xminorgridvisible = true)
+# myTicksBIG = -pipe_radius : pipe_radius/10: pipe_radius
+# myTicksSMALL = -pipe_radius : pipe_radius/5: pipe_radius
+kwargsBIG = (; xminorticks = IntervalsBetween(10), xminorticksvisible = true, xminorgridvisible = true)
+kwargs =(; xminorticks = IntervalsBetween(5), xminorticksvisible = true, xminorgridvisible = true)
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
 fig[0, 1:3] = Label(fig, title)
 cross_velocities_plot= Axis(fig[1,1:2], title = "Pipe Cross Sectional Velocities", xlabel="x (m), centered at pipe center", ylabel = "velocities (m/s)", width =  400; kwargsBIG...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 5)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 5)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, label = "@ 0.75 pipe", color = colors = :navy, markersize = 5)
-vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
 fig[1, 3] = Legend(fig, cross_velocities_plot, frame_visible = false)
 quarterPlot= Axis(fig[2, 1], width = 150, title = "@ 0.25 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, color = :lightblue, markersize = 3)
-vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]-1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
 quarterPlot= Axis(fig[2, 2], width = 150, title = "@ 0.5 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, color = :blue, markersize = 3)
-vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]-1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
 quarterPlot= Axis(fig[2, 3], width = 150, title = "@ 0.75 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, color = :navy, markersize = 3)
-vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[1]-1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
 fig
@@ -773,25 +794,25 @@ cross_tracer_plot= Axis(fig[1,1:2], title = "Pipe Cross Sectional temperatures",
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 5)
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 5)
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_three_quarter, label = "@ 0.75 pipe", color = colors = :navy, markersize = 5)
-vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]-1] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
+vlines!([(w_velocity_nodes[1][x_pipe_range_tracer[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_tracer[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_tracer[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_tracer[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
 ylims!(T_range[1], T_range[2])
 fig[1, 3] = Legend(fig, cross_tracer_plot, frame_visible = false)
 quarterPlot= Axis(fig[2, 1], width = 150, title = "@ 0.25 pipe")
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_quarter, color = :lightblue, markersize = 3)
-vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]-1] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_tracer[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_tracer[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_tracer[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_tracer[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(T_range[1], T_range[2])
 quarterPlot= Axis(fig[2, 2], width = 150, title = "@ 0.5 pipe")
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_half, color = :blue, markersize = 3)
-vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]-1] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_tracer[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_tracer[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_tracer[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_tracer[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(T_range[1], T_range[2])
 quarterPlot= Axis(fig[2, 3], width = 150, title = "@ 0.75 pipe")
 scatterlines!((x_plot_range_tracer .- x_center), Tₙ_three_quarter, color = :navy, markersize = 3)
-vlines!([(tracer_nodes[1][x_pipe_range_tracer[1]-1] - x_center) , (tracer_nodes[1][x_pipe_range_tracer[2]+1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_tracer[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_tracer[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_tracer[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_tracer[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(T_range[1], T_range[2])
 fig
 @info "Making cross sectional temperature animation from data"
 frames = 1:length(times)
-record(fig, joinpath(pathname, "CROSSSECtemperatures.mp4"), frames, framerate=8) do i
+record(fig, joinpath(pathname, "EXTENDEDCROSSSECtemperatures.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
