@@ -686,7 +686,7 @@ function getPipeAndWallXIndexRange(fieldNodes)
             else 
                 count += 1
                 if (count == 4)
-                    rightIndex = i - 1
+                    rightWallIndex = i - 1
                     break;
                 else
                     leftPipeIndex = i 
@@ -698,7 +698,7 @@ function getPipeAndWallXIndexRange(fieldNodes)
     if (leftWallIndex == -1 || rightWallIndex == -1 || leftPipeIndex == -1 || rightPipeIndex == -1)
         throw("pipe side walls not found")
     else
-        return [leftWallIndex, leftPipeIndex, rightPipeIndex, righWallIndex]
+        return [leftWallIndex, leftPipeIndex, rightPipeIndex, rightWallIndex]
     end
 end 
 #This functon returns the discrete index for z, rounding to the nearest one. If the point is perfectly in between two, it returns the lower one 
@@ -783,9 +783,9 @@ end
 
 #temperatures
 #extract cross sections
-Tₙ_quarter =  @lift interior(T_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[2] + 4) , 1, z_index_quarter_tracer)
-Tₙ_half =  @lift interior(T_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[2] + 4) , 1, z_index_half_tracer)
-Tₙ_three_quarter =  @lift interior(T_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[2] + 4) , 1, z_index_three_quarter_tracer)
+Tₙ_quarter =  @lift interior(T_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , 1, z_index_quarter_tracer)
+Tₙ_half =  @lift interior(T_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , 1, z_index_half_tracer)
+Tₙ_three_quarter =  @lift interior(T_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , 1, z_index_three_quarter_tracer)
 
 fig = Figure(size = (700, 600))
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
