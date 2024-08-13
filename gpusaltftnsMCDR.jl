@@ -18,7 +18,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN nonzero wall viscosity"
+trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN small initial to 40ms long"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -30,8 +30,8 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 1hour #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
-run_duration = 15minute
-output_interval = 10
+run_duration = 3hour
+output_interval = 1minute
 
 """DOMAIN SIZE & SETUP"""
 const domain_x = 0.7;
@@ -181,7 +181,7 @@ end     # uses the fact that 32gb is approx 100 million cells
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, TWaterColumn, SWaterColumn) - getBackgroundDensity(-pipe_top_depth, TWaterColumn, SWaterColumn))/pipe_length #takes average for unaltered water column across the pipe (NOT DOMAIN!)
 oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
-@info @sprintf("Buoyancy Oscillation period: %.3f minutes",  oscillation_period/minute)
+@info @sprintf("N = %.3e rad/sec | Buoyancy Oscillation period: %.3f minutes",  oscillation_angular_frequency, oscillation_period/minute)
 #grid spacing desired
 max_grid_spacing = 0.001
 #max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
@@ -205,7 +205,8 @@ const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing
 #location with equivalent density
 #TODO: potentially fix that height displaced with an estimation of where the density is equal 
 #v_max_predicted = oscillation_angular_frequency * 1
-v_max_predicted = 0.03 #this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
+#0.03 stable
+v_max_predicted = 0.01 #this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
 max_time_step_allowed = 2 * min_time_step_predicted
 #damping rate for forcers  
@@ -454,13 +455,13 @@ function saltDiffusivities(x, y, z, diffusivities::NamedTuple)
     end
 end
 function myViscosity(x, y, z, diffusivities::NamedTuple)
-    # if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
-    #     return diffusivities[:seawater].ν
-    # elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
-    #     return 0
-    # else 
+    if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
         return diffusivities[:seawater].ν
-    # end
+    elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
+        return 0
+    else 
+        return diffusivities[:seawater].ν
+    end
 end
 tempDiffusivities(x, z, t) = tempDiffusivities(x, 0, z, diffusivity_data, pipeWallThickness, "")
 saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
@@ -514,7 +515,8 @@ initial_advection_time_scale = min_grid_spacing/initial_travel_velocity_fake
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, pipeWallThickness, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0, diffusivity_data)
-initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed)
+#initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed)
+initial_time_step = 0.0048
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, 0.2 * viscous_time_scale, max_time_step_allowed) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 #set up simulation & timewizard
@@ -690,6 +692,7 @@ end
 w_velocity_nodes = nodes(w_t[1].grid, (Center(), Center(), Face()), reshape = true)
 x_pipe_range_velocities= getPipeAndWallXIndexRange(w_velocity_nodes) 
 x_plot_range_velocities = w_velocity_nodes[1][(x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4)]#gives a 4 cell halo
+z_index_tenth_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.1 * pipe_length)) 
 z_index_quarter_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.25 * pipe_length)) 
 z_index_half_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.5 * pipe_length)) 
 z_index_three_quarter_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth - (0.75 * pipe_length)) 
@@ -701,6 +704,7 @@ z_index_half_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.5 * pipe_leng
 z_index_three_quarter_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.75 * pipe_length)) 
 
 #extract cross sections
+wₙ_tenth =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_tenth_velocities)
 wₙ_quarter =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_quarter_velocities)
 wₙ_half =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_half_velocities)
 wₙ_three_quarter =  @lift interior(w_t[$n], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_three_quarter_velocities)
@@ -715,9 +719,9 @@ function getMaxAndMinInPipe(numPoints, dataSeries, x_range::UnitRange, z_range::
     end
     return (myMin, myMax)
 end
-w_pipe_range = getMaxAndMinInPipe(num_Data_Points, w_t, (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[2] + 4), (getZIndex(w_velocity_nodes, -pipe_bottom_depth)):(getZIndex(w_velocity_nodes, -pipe_top_depth)))
+w_pipe_range = getMaxAndMinInPipe(num_Data_Points, w_t, (x_pipe_range_velocities[2]):(x_pipe_range_velocities[3]), (getZIndex(w_velocity_nodes, -pipe_bottom_depth)):(getZIndex(w_velocity_nodes, -pipe_top_depth)))
 
-fig = Figure(size = (700, 600))
+fig = Figure(size = (1000, 600))
 # myTicksBIG = -pipe_radius : pipe_radius/10: pipe_radius
 # myTicksSMALL = -pipe_radius : pipe_radius/5: pipe_radius
 kwargsBIG = (; xminorticks = IntervalsBetween(10), xminorticksvisible = true, xminorgridvisible = true)
@@ -725,6 +729,7 @@ kwargs =(; xminorticks = IntervalsBetween(5), xminorticksvisible = true, xminorg
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
 fig[0, 1:3] = Label(fig, title)
 cross_velocities_plot= Axis(fig[1,1:2], title = "Pipe Cross Sectional Velocities", xlabel="x (m), centered at pipe center", ylabel = "velocities (m/s)", width =  400; kwargsBIG...)
+scatterlines!((x_plot_range_velocities .- x_center), wₙ_tenth, label = "@ 0.1 pipe", color = colors = :gray, markersize = 5)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 5)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 5)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, label = "@ 0.75 pipe", color = colors = :navy, markersize = 5)
@@ -732,17 +737,22 @@ vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocit
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
 fig[1, 3] = Legend(fig, cross_velocities_plot, frame_visible = false)
-quarterPlot= Axis(fig[2, 1], width = 150, title = "@ 0.25 pipe"; kwargs...)
+quarterPlot= Axis(fig[2, 1], width = 150, title = "@ 0.1 pipe"; kwargs...)
+scatterlines!((x_plot_range_velocities .- x_center), wₙ_tenth, color = :gray, markersize = 3)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
+ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
+# ylims!(-0.01, 0.01)
+quarterPlot= Axis(fig[2, 2], width = 150, title = "@ 0.25 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, color = :lightblue, markersize = 3)
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
-quarterPlot= Axis(fig[2, 2], width = 150, title = "@ 0.5 pipe"; kwargs...)
+quarterPlot= Axis(fig[2, 3], width = 150, title = "@ 0.5 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, color = :blue, markersize = 3)
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
-quarterPlot= Axis(fig[2, 3], width = 150, title = "@ 0.75 pipe"; kwargs...)
+quarterPlot= Axis(fig[2, 4], width = 150, title = "@ 0.75 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, color = :navy, markersize = 3)
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
