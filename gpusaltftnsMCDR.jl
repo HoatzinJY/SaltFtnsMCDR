@@ -930,31 +930,33 @@ record(fig, joinpath(pathname,"ZOOMtracer.mp4"), frames, framerate=8) do i
 end
 
 #properties
-fig = Figure(size=(600, 900))
+fig = Figure(size=(1300, 600))
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
-axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
-fig[1, :] = Label(fig, title)
+axis_kwargs = (xlabel="x (m)", width=300)
+fig[1, 1:6] = Label(fig, title)
 xT, yT, zT = nodes(T_t[1])
-ax_T = Axis(fig[2, 1]; title="temperature[C]", axis_kwargs...)
+ax_T = Axis(fig[2, 1]; title="temperature[C]", ylabel="z (m)", axis_kwargs...)
 hm_T = heatmap!(ax_T, xT, zT, Tₙ; colorrange=T_range, colormap=:thermal)
-xlims!(ax_T,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
+xlims!(ax_T,(x_center - pipe_radius - pipe_wall_thickness - (1.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (1.5 * pipe_radius)))
 ylims!(ax_T, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
 Colorbar(fig[2, 2], hm_T, label="C")
 xS, yS, zS = nodes(S_t[1])
-ax_S = Axis(fig[3, 1]; title="salinity[ppt]", axis_kwargs...)
+ax_S = Axis(fig[2, 3]; title="salinity[ppt]", axis_kwargs...)
 hm_S = heatmap!(ax_S, xS, zS, Sₙ; colorrange=S_range, colormap=:haline) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-xlims!(ax_S,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
+xlims!(ax_S,(x_center - pipe_radius - pipe_wall_thickness - (1.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (1.5 * pipe_radius)))
 ylims!(ax_S, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
-Colorbar(fig[3, 2], hm_S, label="ppt")
+hideydecorations!(ax_S, grid = false)
+Colorbar(fig[2, 4], hm_S, label="ppt")
 xρ, yρ, zρ = nodes(ρ_t[1])
-ax_ρ = Axis(fig[4, 1]; title="potential density[kg/m^3]", axis_kwargs...)
+ax_ρ = Axis(fig[2, 5]; title="potential density[kg/m^3]", axis_kwargs...)
 hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=Reverse(:viridis)) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-xlims!(ax_ρ,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
+xlims!(ax_ρ,(x_center - pipe_radius - pipe_wall_thickness - (1.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (1.5 * pipe_radius)))
 ylims!(ax_ρ, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
-Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
+hideydecorations!(ax_ρ, grid = false)
+Colorbar(fig[2, 6], hm_ρ, label="kg/m^3")
 fig
 @info "Making properties animation from data"
 frames = 1:length(times)
