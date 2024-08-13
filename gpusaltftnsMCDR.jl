@@ -10,6 +10,7 @@ using SeawaterPolynomials
 using GibbsSeaWater
 using NetCDF
 using DSP
+using MPIPreferences
 
 const day = 86400;
 const hour = 3600;
@@ -17,7 +18,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN 0.7m diffforcing zero diffusivity"
+trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN 0.7m diffforcing near zero viscosity"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -29,8 +30,8 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 1hour #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
-run_duration = 8hour
-output_interval = 1minute
+run_duration = 15minute
+output_interval = 10
 
 """DOMAIN SIZE & SETUP"""
 const domain_x = 0.7;
@@ -445,7 +446,7 @@ end
 #crashed with zeroing out salt diffusivity and viscosity
 function saltDiffusivities(x, y, z, diffusivities::NamedTuple)
     if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
-        return 0
+        return 1e-30
     elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
         return 0
     else
@@ -454,7 +455,7 @@ function saltDiffusivities(x, y, z, diffusivities::NamedTuple)
 end
 function myViscosity(x, y, z, diffusivities::NamedTuple)
     if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
-        return diffusivities[:seawater].ν
+        return 0
     elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
         return 0
     else 
