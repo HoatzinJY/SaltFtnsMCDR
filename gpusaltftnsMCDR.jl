@@ -18,7 +18,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN 0.7m diffforcing near zero viscosity"
+trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN nonzero wall viscosity"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -446,7 +446,7 @@ end
 #crashed with zeroing out salt diffusivity and viscosity
 function saltDiffusivities(x, y, z, diffusivities::NamedTuple)
     if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
-        return 1e-30
+        return diffusivities[:seawater].S
     elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
         return 0
     else
@@ -454,13 +454,13 @@ function saltDiffusivities(x, y, z, diffusivities::NamedTuple)
     end
 end
 function myViscosity(x, y, z, diffusivities::NamedTuple)
-    if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
-        return 0
-    elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
-        return 0
-    else 
+    # if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
+    #     return diffusivities[:seawater].ν
+    # elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
+    #     return 0
+    # else 
         return diffusivities[:seawater].ν
-    end
+    # end
 end
 tempDiffusivities(x, z, t) = tempDiffusivities(x, 0, z, diffusivity_data, pipeWallThickness, "")
 saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
@@ -513,11 +513,10 @@ initial_travel_velocity_fake = 0.025 # a number just to set an initial time step
 initial_advection_time_scale = min_grid_spacing/initial_travel_velocity_fake
 diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, pipeWallThickness, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
-viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0)
+viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0, diffusivity_data)
 initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed)
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
-new_max_time_step = min(0.2 * diffusion_time_scale, max_time_step_allowed) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
-
+new_max_time_step = min(0.2 * diffusion_time_scale, 0.2 * viscous_time_scale, max_time_step_allowed) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 #set up simulation & timewizard
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
 
