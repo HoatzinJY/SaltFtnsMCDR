@@ -17,7 +17,7 @@ const minute = 60;
 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN 0.7m diffforcing"
+trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN 0.7m diffforcing zero diffusivity"
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -29,8 +29,8 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 1hour #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
-run_duration = 30minute
-output_interval = 10
+run_duration = 8hour
+output_interval = 1minute
 
 """DOMAIN SIZE & SETUP"""
 const domain_x = 0.7;
@@ -49,7 +49,7 @@ const pipe_length = 1
 const pipe_top_depth = 0.5
 # const pipe_length = 200 #BIG
 # const pipe_top_depth = 10 #BIG
-const pipe_wall_thickness_intended = 0.01
+const pipe_wall_thickness_intended = 0.005
 const pipe_bottom_depth = pipe_top_depth + pipe_length
 const wall_material_ρ = 8900
 const wall_material_cₚ = 376.812 
@@ -204,7 +204,7 @@ const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing
 #location with equivalent density
 #TODO: potentially fix that height displaced with an estimation of where the density is equal 
 #v_max_predicted = oscillation_angular_frequency * 1
-v_max_predicted = 0.03 #this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe
+v_max_predicted = 0.03 #this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
 max_time_step_allowed = 2 * min_time_step_predicted
 #damping rate for forcers  
@@ -442,15 +442,20 @@ function tempDiffusivities(x, y, z, diffusivities::NamedTuple, wallThickness::Na
     #     #return diffusivities[:seawater].T
     # # end
 end
+#crashed with zeroing out salt diffusivity and viscosity
 function saltDiffusivities(x, y, z, diffusivities::NamedTuple)
-    if (isPipeWall(x, z) || isSidePipeWall(x, z))
+    if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
         return 0
-    else 
+    elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
+        return 0
+    else
         return diffusivities[:seawater].S
     end
 end
 function myViscosity(x, y, z, diffusivities::NamedTuple)
-    if (isPipeWall(x, z) || isSidePipeWall(x, z))
+    if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
+        return diffusivities[:seawater].ν
+    elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
         return 0
     else 
         return diffusivities[:seawater].ν
@@ -630,36 +635,6 @@ scatterlines!(times, fill(SWaterColumn(-domain_z), length(times)), label = "bott
 fig[3, 2] = Legend(fig, salinities_plot, frame_visible = false)
 fig
 save(joinpath(pathname,"averaged values vs time.png"), fig)
-@info "Finished plotting average values vs time chart"
-
-
-#FILTERED AVERAGES
-averages_unfilt = zeros(length(times))
-for j in 1 : length(times)
-    averages_unfilt[j] = getMaskedAverageAtZ(pipeMask, w_t[j], (Center(), Center(), Face()), (-pipe_top_depth - 0.5*pipe_length), z_grid_spacing)
-end
-#filter
-fs = 1/output_interval
-# num_oscillation = 6
-# fc = (1/num_oscillation) * (1/oscillation_period)
-fc = 1/30minute
-averages_filt = filtfilt(digitalfilter(Lowpass(fc, fs = fs), Butterworth(5)), averages_unfilt)
-#plot
-fig = Figure(size = (1000, 600))
-title = "Velocity and Discharge"
-fig[0, :] = Label(fig, title)
-velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
-scatterlines!((times/hour), averages_unfilt, label = "velocity average min", color = :blue, markersize = 5)
-scatterlines!((times/hour), averages_filt, label = "filtered velocity", color = :red, markersize = 0)
-xlims!(0, times[end]/hour)
-fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
-volume_flux_plot= Axis(fig[2, 1], title = "Discharge from filtered velocity & 3d conversion", xlabel="time(hrs)", ylabel = "discharge m^3/s", width =  700)
-volume_flux = averages_filt .* (π*(pipe_radius)^2)
-scatterlines!((times/hour), averages_filt, label = "discharge", color = :green, markersize = 0)
-xlims!(0, times[end]/hour)
-fig[2, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
-fig
-save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
 @info "Finished plotting average values vs time chart"
 
 
@@ -898,31 +873,34 @@ end
 # just ploting area around pipe with 5x pipe diameteron either side & 2x pipe diameter on top and bottom
 #setting ranges, for testing, should delete 
 #velocities
-fig = Figure(size=(600, 900))
+fig = Figure(size=(900, 600))
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
-axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=400)
-fig[1, :] = Label(fig, title)
+axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=300)
+fig[1, 1:3] = Label(fig, title)
 xw, yw, zw = nodes(w_t[1])
 ax_w = Axis(fig[2, 1]; title="w velocity", axis_kwargs...)
 w_colorbar_range = (-max(abs(w_range[1]), abs(w_range[2])), max(abs(w_range[1]), abs(w_range[2])))
 hm_w = heatmap!(ax_w, xw, zw, wₙ; colorrange=w_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-xlims!(ax_w,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
+xlims!(ax_w,(x_center - pipe_radius - pipe_wall_thickness - (1.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (1.5 * pipe_radius)))
 ylims!(ax_w, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
-Colorbar(fig[2, 2], hm_w, label="m/s")
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+#Colorbar(fig[2, 2], hm_w, label="m/s")
 xu, yu, zu = nodes(u_t[1])
-ax_u = Axis(fig[3, 1]; title="u velocity", axis_kwargs...)
+ax_u = Axis(fig[2, 2]; title="u velocity", axis_kwargs...)
 u_colorbar_range = (-max(abs(u_range[1]), abs(u_range[2])), max(abs(u_range[1]), abs(u_range[2])))
-hm_u = heatmap!(ax_u, xu, zu, uₙ; colorrange=u_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-xlims!(ax_u,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
+hm_u = heatmap!(ax_u, xu, zu, uₙ; colorrange=w_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+xlims!(ax_u,(x_center - pipe_radius - pipe_wall_thickness - (1.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (1.5 * pipe_radius)))
 ylims!(ax_u, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
-Colorbar(fig[3, 2], hm_u, label="m/s")
-xζ, yζ, zζ = nodes(ζ_t[1])
-ax_ζ = Axis(fig[4, 1]; title="vorticity", axis_kwargs...)
-ζ_colorbar_range = (-max(abs(ζ_range[1]), abs(ζ_range[2])), max(abs(ζ_range[1]), abs(ζ_range[2])))
-hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-xlims!(ax_ζ,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
-ylims!(ax_ζ, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
-Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+Colorbar(fig[2, 3], hm_u, label="m/s")
+# xζ, yζ, zζ = nodes(ζ_t[1])
+# ax_ζ = Axis(fig[4, 1]; title="vorticity", axis_kwargs...)
+# ζ_colorbar_range = (-max(abs(ζ_range[1]), abs(ζ_range[2])), max(abs(ζ_range[1]), abs(ζ_range[2])))
+# hm_ζ = heatmap!(ax_ζ, xζ, zζ, ζₙ; colorrange=ζ_colorbar_range, colormap=:balance) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+# xlims!(ax_ζ,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
+# ylims!(ax_ζ, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
+# vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+# Colorbar(fig[4, 2], hm_ζ, label="rot/sec")
 fig
 @info "Making velocities animation from data"
 frames = 1:length(times)
@@ -942,6 +920,7 @@ A_colorbar_range = (A_range)
 hm_A = heatmap!(ax_A, xA, zA, Aₙ; colorrange=A_colorbar_range, colormap=:matter) 
 xlims!(ax_A,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
 ylims!(ax_A, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
 Colorbar(fig[2, 2], hm_A, label="amount")
 frames = 1:length(times)
 @info "Making tracers animation from data"
@@ -960,18 +939,21 @@ ax_T = Axis(fig[2, 1]; title="temperature[C]", axis_kwargs...)
 hm_T = heatmap!(ax_T, xT, zT, Tₙ; colorrange=T_range, colormap=:thermal)
 xlims!(ax_T,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
 ylims!(ax_T, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
 Colorbar(fig[2, 2], hm_T, label="C")
 xS, yS, zS = nodes(S_t[1])
 ax_S = Axis(fig[3, 1]; title="salinity[ppt]", axis_kwargs...)
 hm_S = heatmap!(ax_S, xS, zS, Sₙ; colorrange=S_range, colormap=:haline) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 xlims!(ax_S,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
 ylims!(ax_S, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
 Colorbar(fig[3, 2], hm_S, label="ppt")
 xρ, yρ, zρ = nodes(ρ_t[1])
 ax_ρ = Axis(fig[4, 1]; title="potential density[kg/m^3]", axis_kwargs...)
 hm_ρ = heatmap!(ax_ρ, xρ, zρ, ρₙ; colorrange=ρ_range, colormap=Reverse(:viridis)) #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
 xlims!(ax_ρ,(x_center - pipe_radius - pipe_wall_thickness - (5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (5 * pipe_radius)))
 ylims!(ax_ρ, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius))) 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
 Colorbar(fig[4, 2], hm_ρ, label="kg/m^3")
 fig
 @info "Making properties animation from data"
@@ -981,6 +963,35 @@ record(fig, joinpath(pathname,"ZOOMproperties.mp4"), frames, framerate=8) do i
     n[] = i
 end
 
+
+#FILTERED AVERAGES
+averages_unfilt = zeros(length(times))
+for j in 1 : length(times)
+    averages_unfilt[j] = getMaskedAverageAtZ(pipeMask, w_t[j], (Center(), Center(), Face()), (-pipe_top_depth - 0.5*pipe_length), z_grid_spacing)
+end
+#filter
+fs = 1/output_interval
+# num_oscillation = 6
+# fc = (1/num_oscillation) * (1/oscillation_period)
+fc = 1/30minute
+averages_filt = filtfilt(digitalfilter(Lowpass(fc, fs = fs), Butterworth(5)), averages_unfilt)
+#plot
+fig = Figure(size = (1000, 600))
+title = "Velocity and Discharge"
+fig[0, :] = Label(fig, title)
+velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
+scatterlines!((times/hour), averages_unfilt, label = "velocity average min", color = :blue, markersize = 5)
+scatterlines!((times/hour), averages_filt, label = "filtered velocity", color = :red, markersize = 0)
+xlims!(0, times[end]/hour)
+fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
+volume_flux_plot= Axis(fig[2, 1], title = "Discharge from filtered velocity & 3d conversion", xlabel="time(hrs)", ylabel = "discharge m^3/s", width =  700)
+volume_flux = averages_filt .* (π*(pipe_radius)^2)
+scatterlines!((times/hour), averages_filt, label = "discharge", color = :green, markersize = 0)
+xlims!(0, times[end]/hour)
+fig[2, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
+fig
+save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
+@info "Finished plotting average values vs time chart"
 
 
 #plot lines showing velocity at different heights
