@@ -19,10 +19,10 @@ const minute = 60;
 #search #SIMILITUDE to change things for similutde theories 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-# trial_name = "SIMILITUDE TEST THREE SMALL LONG 80ms max"
-# mkdir(joinpath("Trials", (trial_name)))
-# pathname = joinpath("Trials", (trial_name))
-# filename = joinpath(pathname, "data")
+trial_name = "SIMILITUDE TEST TWO BIG more more accurate"
+mkdir(joinpath("Trials", (trial_name)))
+pathname = joinpath("Trials", (trial_name))
+filename = joinpath(pathname, "data")
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -34,11 +34,11 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 5hour
-run_duration = 12hour
-output_interval = 1minute
+run_duration = 1minute
+output_interval = 1
 """DOMAIN SIZE & SETUP"""
-const domain_x = 0.5;#SIMILITUDE
-const domain_z = 1.5; #SIMILITUDE
+const domain_x = 1.4;#SIMILITUDE
+const domain_z = 3; #SIMILITUDE
 # const domain_z = 220; #BIG
 const x_center = domain_x/2;
 #max_grid_spacing = 0.02; #TODO: figure out what this needs to be set to 
@@ -48,8 +48,8 @@ struct PipeWallData
     thermal_diffusivity :: Float64
     thickness :: Float64
 end
-const pipe_radius = 0.02 #SIMILITUDE
-const pipe_length = 0.5 #SIMILITUDE
+const pipe_radius = 0.04 #SIMILITUDE
+const pipe_length = 2 #SIMILITUDE
 const pipe_top_depth = 0.5 #SIMILITUDE
 # const pipe_length = 200 #BIG
 # const pipe_top_depth = 10 #BIG
@@ -73,8 +73,8 @@ struct SeawaterDiffusivityData
 end
 const eddy_horizontal_diffusivity = 5e2 #not used
 const eddy_vertical_diffusivity = 1e-5 #not used
-const sw_viscosity_molecular =  1.05e-6 * sqrt(1/8)#SIMILITUDE
-const sw_T_diffusivity_molecular = 1.46e-7 * sqrt(1/8)#SIMILITUDE
+const sw_viscosity_molecular =  1.05e-6 * sqrt(8)#SIMILITUDE
+const sw_T_diffusivity_molecular = 1.46e-7 * sqrt(8)#SIMILITUDE
 #const sw_T_diffusivity_molecular = 1e-5 # as per the experimental data in papers Zhang 2004
 const sw_S_diffusivity_molecular = 1.3e-9 
 const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
@@ -88,7 +88,7 @@ const S_top = 35.22;
 # const S_bot = 34.18;
 # const S_top = 36.601543;
 const delta_z = 200; 
-const delta_z_multiplier = 0.499; #SIMILITUDE
+const delta_z_multiplier = 2; #SIMILITUDE
 
 function TWaterColumn(z)
     if (z > -pipe_top_depth)
@@ -214,7 +214,7 @@ const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing
 #TODO: potentially fix that height displaced with an estimation of where the density is equal 
 #v_max_predicted = oscillation_angular_frequency * 1
 #0.03 stable
-v_max_predicted = 0.005 #SIMILITUDE this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
+v_max_predicted = 0.02 #SIMILITUDE this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
 max_time_step_allowed = 2 * min_time_step_predicted
 #damping rate for forcers  
@@ -364,7 +364,9 @@ function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Funct
 end 
 
 # const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, max_grid_spacing, SWaterColumn, TWaterColumn)
-const pipeTGrad = 0.021#similitude
+const pipeTGrad = 0.042#similitude
+
+
 function T_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return TWaterColumn(-pipe_bottom_depth) + (pipeTGrad * (z + pipe_bottom_depth))
