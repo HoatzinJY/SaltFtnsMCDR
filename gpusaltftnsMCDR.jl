@@ -16,9 +16,13 @@ const day = 86400;
 const hour = 3600;
 const minute = 60;
 
+#search #SIMILITUDE to change things for similutde theories 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN small initial to 40ms long"
+trial_name = "SIMILITUDE TEST THREE SMALL more accurate LONG 80ms max"
+mkdir(joinpath("Trials", (trial_name)))
+pathname = joinpath("Trials", (trial_name))
+filename = joinpath(pathname, "data")
 #next run wih min 0.003, and then 2x
 #then with 0.1, and 2x
 
@@ -29,13 +33,12 @@ trial_name = "0.001 res 1mL 0.02mR 1e-7Kt 9minN small initial to 40ms long"
 const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
-simulation_duration = 1hour #about 6-7 hours ish shoudl reach approx steady state with lab scale setup
-run_duration = 3hour
-output_interval = 1minute
-
+simulation_duration = 5hour
+run_duration = 2minute
+output_interval = 1
 """DOMAIN SIZE & SETUP"""
-const domain_x = 0.7;
-const domain_z = 2; 
+const domain_x = 0.5;#SIMILITUDE
+const domain_z = 1.5; #SIMILITUDE
 # const domain_z = 220; #BIG
 const x_center = domain_x/2;
 #max_grid_spacing = 0.02; #TODO: figure out what this needs to be set to 
@@ -45,9 +48,9 @@ struct PipeWallData
     thermal_diffusivity :: Float64
     thickness :: Float64
 end
-const pipe_radius = 0.02
-const pipe_length = 1
-const pipe_top_depth = 0.5
+const pipe_radius = 0.01 #SIMILITUDE
+const pipe_length = 0.5 #SIMILITUDE
+const pipe_top_depth = 0.5 #SIMILITUDE
 # const pipe_length = 200 #BIG
 # const pipe_top_depth = 10 #BIG
 const pipe_wall_thickness_intended = 0.005
@@ -70,10 +73,10 @@ struct SeawaterDiffusivityData
 end
 const eddy_horizontal_diffusivity = 5e2 #not used
 const eddy_vertical_diffusivity = 1e-5 #not used
-const sw_viscosity_molecular = 1.05e-6
-const sw_T_diffusivity_molecular = 1.46e-7
+const sw_viscosity_molecular =  1.05e-6 * sqrt(1/8)#SIMILITUDE
+const sw_T_diffusivity_molecular = 1.46e-7 * sqrt(1/8)#SIMILITUDE
 #const sw_T_diffusivity_molecular = 1e-5 # as per the experimental data in papers Zhang 2004
-const sw_S_diffusivity_molecular = 1.3e-9
+const sw_S_diffusivity_molecular = 1.3e-9 
 const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
 
 
@@ -85,6 +88,7 @@ const S_top = 35.22;
 # const S_bot = 34.18;
 # const S_top = 36.601543;
 const delta_z = 200; 
+const delta_z_multiplier = 0.3349; #SIMILITUDE
 
 function TWaterColumn(z)
     if (z > -pipe_top_depth)
@@ -97,11 +101,11 @@ function TWaterColumn(z)
 end
 function SWaterColumn(z)
     if (z > -pipe_top_depth)
-        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_top_depth)
+        return S_top - ((S_bot - S_top) / (delta_z * delta_z_multiplier))*(-pipe_top_depth)
     elseif (z < -pipe_bottom_depth)
-        return S_top - ((S_bot - S_top) / delta_z)*(-pipe_bottom_depth)
+        return S_top - ((S_bot - S_top) / (delta_z * delta_z_multiplier))*(-pipe_bottom_depth)
     else
-        return S_top - ((S_bot - S_top) / delta_z)z
+        return S_top - ((S_bot - S_top) / (delta_z * delta_z_multiplier))z
     end
 end
 TWaterColumn(x, z) = TWaterColumn(z)
@@ -117,6 +121,10 @@ SWaterColumnBCS(z, t) = SWaterColumn(z)
 """COMPUTATIONAL FUNCTIONS"""
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
 findNearest(A::AbstractArray, x) = findmin(abs(A-x))
+function getXYZ(i, j, k, grid, locs)
+    myNodes = nodes(grid, locs, reshape = true)
+    return[myNodes[1][i], myNodes[2][j], myNodes[3][k]]
+end
 function getMaxAndMin(numPoints, dataSeries)
     myMax = maximum(interior(dataSeries[1], :, 1, :))
     myMin = minimum(interior(dataSeries[1], :, 1, :))
@@ -161,8 +169,8 @@ function getMaskedAverageAtZ(mask::Function, field, locs, zCoord, z_spacings)
 end
 function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)#takes a positive depth
     eos = TEOS10EquationOfState() 
-    S_abs = gsw_sa_from_sp(Sfunc(0,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
-    T_consv = gsw_ct_from_t(S_abs, Tfunc(0,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
+    S_abs = gsw_sa_from_sp(Sfunc(pipe_radius + 0.0001,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
+    T_consv = gsw_ct_from_t(S_abs, Tfunc(pipe_radius + 0.0001,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
     return TEOS10.ρ(T_consv, S_abs, z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
 end
 function checkMemory(capacity, x_cells, z_cells)
@@ -206,7 +214,7 @@ const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing
 #TODO: potentially fix that height displaced with an estimation of where the density is equal 
 #v_max_predicted = oscillation_angular_frequency * 1
 #0.03 stable
-v_max_predicted = 0.01 #this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
+v_max_predicted = 0.005 #this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
 max_time_step_allowed = 2 * min_time_step_predicted
 #damping rate for forcers  
@@ -355,9 +363,7 @@ function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Funct
     return ((ρ₀ - ρ_wc_avg))/(α_avg * 1000 * p_length)
 end 
 
-#const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, z_grid_spacing, SWaterColumn, TWaterColumn)
-
-const pipeTGrad = 0.0345
+const pipeTGrad = 0.008
 
 function T_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
@@ -368,6 +374,7 @@ function T_init(x, y, z)
         return TWaterColumn(z)
     end
 end
+
 
 #fully equillibriated 
 # function T_init(x, y, z)
@@ -407,16 +414,18 @@ end
 z = -pipe_bottom_depth
 wc_density_tot = 0
 pipe_density_tot = 0
+equalized_pipe_density_tot = 0
 count = 0
 while (z <= -pipe_top_depth)
     wc_density_tot += getBackgroundDensity(z, T_init, S_init)
     pipe_density_tot += getBackgroundDensityPipe(z, T_init, S_init)
+    equalized_pipe_density_tot += getBackgroundDensityPipe(z, TWaterColumn, S_init) #as if fully equalized, for similitude 
     z += z_grid_spacing
     count += 1
 end
 
 @info @sprintf("wc density - pipe_density = %.2e kg/m^3", (wc_density_tot/count) - (pipe_density_tot/count))
-
+@info @sprintf("@ eq, wc density - pipe_eq_density = %.3ek kg/m^3", (wc_density_tot/count) - (equalized_pipe_density_tot/count))
 
 """MODEL BOUNDARY CONDITIONS SETUP"""
 # get gradients for boundary conditons
@@ -483,6 +492,7 @@ tracers = (:T, :S, :A)
 closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffusivities, A = 0))
 #closure = ScalarDiffusivity(ν = 1, κ=1)
 
+#domain is periodic in the east-west
 T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
 S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
 boundary_conditions = (T = T_bcs, S = S_bcs)
@@ -496,6 +506,12 @@ S_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxation
 forcing = (u = (uw_pipe_wall_forcer),  w = (uw_pipe_wall_forcer), T = (T_domain_forcer), S = (S_domain_forcer))
 
 model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy, tracers, timestepper, closure, forcing, boundary_conditions)
+# model.output_writers[:checkpointer] = Checkpointer(model; frequency = 150000, dir = pathname, prefix = "checkpoint", force = false, verbose = false, properties = [:architecture, :boundary_conditions, :grid, :clock, :buoyancy, :closure, :velocities, :tracers, :timestepper])
+
+# restore_iteration  = 150000
+# checkpoint_filename = joinpath(pathname, "checkpoint"*string(restore_iteration)) #TODO: check this 
+# model_kwargs = Dict("closure" => closure, "forcing" => forcing)
+# model = restore_from_checkpoint(checkpoint_filename; model_kwargs...)
 
 density_operation = seawater_density(model; geopotential_height)
 @info "model made"
@@ -516,7 +532,7 @@ diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusiv
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0, diffusivity_data)
 #initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed)
-initial_time_step = 0.0048
+initial_time_step = 0.0024 #0.0048 for 1m 0.02R
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, 0.2 * viscous_time_scale, max_time_step_allowed) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 #set up simulation & timewizard
@@ -526,7 +542,7 @@ simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_durat
 
 #various callbacks
 #timewizard
-timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.2, min_change = 0.5) 
+timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.01, min_change = 0.5) 
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
 #progress Message
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
@@ -541,6 +557,19 @@ S = model.tracers.S;
 ρ = Field(density_operation)
 A = model.tracers.A
 
+#diagnostics
+# function ViscousFlux(i, j, k, grid, ν, w, diffusion_data)
+#     #xyz = getXYZ(i, j, k, grid, (Center(), Center(), Center()))
+#     #return ν(xyz[1], xyz[2], xyz[3], diffusion_data) * ∇²ᶜᶜᶜ(i, j, k, grid, w)
+#     #return ν(xyz[1], xyz[2], xyz[3], diffusion_data)
+#     return 3
+# end
+# viscousArgs = (model.closure.ν, model.velocities.w, diffusivity_data)
+# #issue: model.closures.v takes in x, y, z not i, j, k 
+# viscous_flux_kernel_op = KernelFunctionOperation{Center, Center, Center}(ViscousFlux, model.grid, viscousArgs...)
+# ν_component = Field(viscous_flux_kernel_op)
+# compute!(ν_component)
+
 mkdir(joinpath("Trials", (trial_name)))
 pathname = joinpath("Trials", (trial_name))
 filename = joinpath(pathname, "data")
@@ -550,6 +579,9 @@ simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ,
 
 
 run!(simulation, pickup = false)
+# simulation.wall_time_limit += 1minute
+# run!(simulation)
+
 
 #visualize simulation
 #visualize simulation
@@ -727,8 +759,8 @@ fig = Figure(size = (1000, 600))
 kwargsBIG = (; xminorticks = IntervalsBetween(10), xminorticksvisible = true, xminorgridvisible = true)
 kwargs =(; xminorticks = IntervalsBetween(5), xminorticksvisible = true, xminorgridvisible = true)
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
-fig[0, 1:3] = Label(fig, title)
-cross_velocities_plot= Axis(fig[1,1:2], title = "Pipe Cross Sectional Velocities", xlabel="x (m), centered at pipe center", ylabel = "velocities (m/s)", width =  400; kwargsBIG...)
+fig[0, 1:4] = Label(fig, title)
+cross_velocities_plot= Axis(fig[1,1:3], title = "Pipe Cross Sectional Velocities", xlabel="x (m), centered at pipe center", ylabel = "velocities (m/s)", width =  600; kwargsBIG...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_tenth, label = "@ 0.1 pipe", color = colors = :gray, markersize = 5)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_quarter, label = "@ 0.25 pipe", color = colors = :lightblue, markersize = 5)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_half, label = "@ 0.5 pipe", color = colors = :blue, markersize = 5)
@@ -736,7 +768,7 @@ scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter, label =
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
 ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
 # ylims!(-0.01, 0.01)
-fig[1, 3] = Legend(fig, cross_velocities_plot, frame_visible = false)
+fig[1, 4] = Legend(fig, cross_velocities_plot, frame_visible = false)
 quarterPlot= Axis(fig[2, 1], width = 150, title = "@ 0.1 pipe"; kwargs...)
 scatterlines!((x_plot_range_velocities .- x_center), wₙ_tenth, color = :gray, markersize = 3)
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 3)
@@ -991,14 +1023,15 @@ averages_filt = filtfilt(digitalfilter(Lowpass(fc, fs = fs), Butterworth(5)), av
 fig = Figure(size = (1000, 600))
 title = "Velocity and Discharge"
 fig[0, :] = Label(fig, title)
+kwargs= (; yminorticks = IntervalsBetween(10), yminorticksvisible = true, yminorgridvisible = true)
 velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
 scatterlines!((times/hour), averages_unfilt, label = "velocity average min", color = :blue, markersize = 5)
 scatterlines!((times/hour), averages_filt, label = "filtered velocity", color = :red, markersize = 0)
 xlims!(0, times[end]/hour)
 fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
-volume_flux_plot= Axis(fig[2, 1], title = "Discharge from filtered velocity & 3d conversion", xlabel="time(hrs)", ylabel = "discharge m^3/s", width =  700)
+volume_flux_plot= Axis(fig[2, 1], title = "Discharge from filtered velocity & 3d conversion", xlabel="time(hrs)", ylabel = "discharge m^3/s", width =  700; kwargs...)
 volume_flux = averages_filt .* (π*(pipe_radius)^2)
-scatterlines!((times/hour), averages_filt, label = "discharge", color = :green, markersize = 0)
+scatterlines!((times/hour), volume_flux, label = "discharge", color = :green, markersize = 0)
 xlims!(0, times[end]/hour)
 fig[2, 2] = Legend(fig, volume_flux_plot, frame_visible = false)
 fig
