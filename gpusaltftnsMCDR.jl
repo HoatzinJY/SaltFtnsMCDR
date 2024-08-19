@@ -11,6 +11,15 @@ using GibbsSeaWater
 using NetCDF
 using DSP
 using MPIPreferences
+using Oceanostics
+using Oceanostics: _νᶜᶜᶜ
+using Oceananigans.Operators
+using Oceananigans.TurbulenceClosures: viscous_flux_wx
+using Oceananigans: NonhydrostaticModel, BuoyancyField
+using Oceananigans.BuoyancyModels: buoyancy
+using Adapt
+using Oceananigans.Grids: NegativeZDirection, validate_unit_vector
+using Oceananigans.BuoyancyModels: buoyancy_perturbationᶜᶜᶜ, get_temperature_and_salinity, ρ′
 
 const day = 86400;
 const hour = 3600;
@@ -19,7 +28,7 @@ const minute = 60;
 #search #SIMILITUDE to change things for similutde theories 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "SIMILITUDE TEST TWO BIG more more accurate"
+trial_name = "SIMILITUDE TEST THREE SMALL LONG 80ms right radius"
 mkdir(joinpath("Trials", (trial_name)))
 pathname = joinpath("Trials", (trial_name))
 filename = joinpath(pathname, "data")
@@ -34,11 +43,11 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 5hour
-run_duration = 1minute
-output_interval = 1
+run_duration = 10hour
+output_interval = 1minute
 """DOMAIN SIZE & SETUP"""
-const domain_x = 1.4;#SIMILITUDE
-const domain_z = 3; #SIMILITUDE
+const domain_x = 0.5;#SIMILITUDE
+const domain_z = 1.5; #SIMILITUDE
 # const domain_z = 220; #BIG
 const x_center = domain_x/2;
 #max_grid_spacing = 0.02; #TODO: figure out what this needs to be set to 
@@ -48,8 +57,8 @@ struct PipeWallData
     thermal_diffusivity :: Float64
     thickness :: Float64
 end
-const pipe_radius = 0.04 #SIMILITUDE
-const pipe_length = 2 #SIMILITUDE
+const pipe_radius = 0.01 #SIMILITUDE
+const pipe_length = 0.5 #SIMILITUDE
 const pipe_top_depth = 0.5 #SIMILITUDE
 # const pipe_length = 200 #BIG
 # const pipe_top_depth = 10 #BIG
@@ -73,8 +82,8 @@ struct SeawaterDiffusivityData
 end
 const eddy_horizontal_diffusivity = 5e2 #not used
 const eddy_vertical_diffusivity = 1e-5 #not used
-const sw_viscosity_molecular =  1.05e-6 * sqrt(8)#SIMILITUDE
-const sw_T_diffusivity_molecular = 1.46e-7 * sqrt(8)#SIMILITUDE
+const sw_viscosity_molecular =  1.05e-6 * sqrt(1/8)#SIMILITUDE
+const sw_T_diffusivity_molecular = 1.46e-7 * sqrt(1/8)#SIMILITUDE
 #const sw_T_diffusivity_molecular = 1e-5 # as per the experimental data in papers Zhang 2004
 const sw_S_diffusivity_molecular = 1.3e-9 
 const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
@@ -88,7 +97,7 @@ const S_top = 35.22;
 # const S_bot = 34.18;
 # const S_top = 36.601543;
 const delta_z = 200; 
-const delta_z_multiplier = 2; #SIMILITUDE
+const delta_z_multiplier = 0.499; #SIMILITUDE
 
 function TWaterColumn(z)
     if (z > -pipe_top_depth)
@@ -132,6 +141,11 @@ function getMaxAndMin(numPoints, dataSeries)
         myMax = max(maximum(interior(dataSeries[i], :, 1, :)),myMax )
         myMin = min(minimum(interior(dataSeries[i], :, 1, :)), myMin)
     end
+    return (myMin, myMax)
+end
+function getMaxAndMinArr(arr)
+    myMax = maximum(arr)
+    myMin = minimum(arr)
     return (myMin, myMax)
 end
 function getMaxAndMinEnd(dataSeries)
@@ -191,7 +205,7 @@ oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("N = %.3e rad/sec | Buoyancy Oscillation period: %.3f minutes",  oscillation_angular_frequency, oscillation_period/minute)
 #grid spacing desired
-max_grid_spacing = 0.001
+max_grid_spacing = 0.0005
 #max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
 @info @sprintf("Max Grid Spacing: %.3em", max_grid_spacing)
 my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
@@ -214,7 +228,7 @@ const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing
 #TODO: potentially fix that height displaced with an estimation of where the density is equal 
 #v_max_predicted = oscillation_angular_frequency * 1
 #0.03 stable
-v_max_predicted = 0.02 #SIMILITUDE this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
+v_max_predicted = 0.005 #SIMILITUDE this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
 max_time_step_allowed = 2 * min_time_step_predicted
 #damping rate for forcers  
@@ -364,9 +378,7 @@ function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Funct
 end 
 
 # const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, max_grid_spacing, SWaterColumn, TWaterColumn)
-const pipeTGrad = 0.042#similitude
-
-
+const pipeTGrad = 0.021#similitude
 function T_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return TWaterColumn(-pipe_bottom_depth) + (pipeTGrad * (z + pipe_bottom_depth))
@@ -490,6 +502,7 @@ advection = WENO()
 eos = TEOS10EquationOfState()
 buoyancy = SeawaterBuoyancy(equation_of_state=eos)
 
+
 tracers = (:T, :S, :A)
 closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffusivities, A = 0))
 #closure = ScalarDiffusivity(ν = 1, κ=1)
@@ -534,7 +547,7 @@ diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusiv
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0, diffusivity_data)
 #initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed)
-initial_time_step = 0.0024 #0.0048 for 1m 0.02R
+initial_time_step = 0.00 #0.0048 for 1m 0.02R
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, 0.2 * viscous_time_scale, max_time_step_allowed) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 #set up simulation & timewizard
@@ -558,23 +571,34 @@ S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
 ρ = Field(density_operation)
 A = model.tracers.A
+@inline function ViscousComponent(i, j, k, grid, closure, clock, velocities)
+    #return _νᶜᶜᶜ(i, j, k, grid, model.closure, model.diffusivity_fields, model.clock)  * ∇²ᶜᶜᶜ(i, j, k, grid, model.velocities.w)
+    return _νᶜᶜᶜ(i, j, k, grid, closure, nothing, clock)  * ∇²ᶜᶜᶜ(i, j, k, grid, velocities)
+end
+viscousArgs = (model.closure, model.clock, model.velocities.w)
+viscous_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(ViscousComponent, model.grid, viscousArgs...)
+ν= Field(viscous_component_kernel_op)
+#viscous_field = compute!(ν_component)
+#this computes the buoyancy relative to the point stationary outside --> not right, but how?
+@inline function wcBuoyancy(i, j, k, grid, b::SeawaterBuoyancy, tracer_fields)
+    T, S = get_temperature_and_salinity(b, tracer_fields)
+    return (- (b.gravitational_acceleration * ρ′(i, j, k, grid, b.equation_of_state, T, S)
+    / b.equation_of_state.reference_density))
+end
+#this computes the buoyancy acceleration relative to a reference value
+@inline function BuoyancyComponent(i, j, k, grid, b::SeawaterBuoyancy, tracer_fields, wc_index)
+    T, S = get_temperature_and_salinity(b, tracer_fields)
+    return (- (b.gravitational_acceleration * ρ′(i, j, k, grid, b.equation_of_state, T, S)
+    / b.equation_of_state.reference_density)) - wcBuoyancy(wc_index, j, k, grid, b, tracer_fields)
+end
+wc_index = getXIndex(tracer_nodes, pipe_radius + (3 *x_grid_spacing))
+buoyancyArgs = (buoyancy, model.tracers, wc_index) #for some reason model.buoyancy.equation_of_state does not return an eos
+#buoyancy_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(buoyancy_perturbationᶜᶜᶜ, model.grid, buoyancyArgs...) #uses built in
+buoyancy_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(BuoyancyComponent, model.grid, buoyancyArgs...)
+b = Field(buoyancy_component_kernel_op)
+#buoyancy_field = compute!(b_component)
 
-#diagnostics
-# function ViscousFlux(i, j, k, grid, ν, w, diffusion_data)
-#     #xyz = getXYZ(i, j, k, grid, (Center(), Center(), Center()))
-#     #return ν(xyz[1], xyz[2], xyz[3], diffusion_data) * ∇²ᶜᶜᶜ(i, j, k, grid, w)
-#     #return ν(xyz[1], xyz[2], xyz[3], diffusion_data)
-#     return 3
-# end
-# viscousArgs = (model.closure.ν, model.velocities.w, diffusivity_data)
-# #issue: model.closures.v takes in x, y, z not i, j, k 
-# viscous_flux_kernel_op = KernelFunctionOperation{Center, Center, Center}(ViscousFlux, model.grid, viscousArgs...)
-# ν_component = Field(viscous_flux_kernel_op)
-# compute!(ν_component)
-
-#averaging output writer --> average over the buoyancy oscillation
-#schedule = AveragedTimeInterval()
-simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A); filename, schedule=TimeInterval(output_interval), overwrite_existing=true) #can also set to TimeInterval
+simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A, ν, b); filename, schedule=TimeInterval(output_interval), overwrite_existing=true) #can also set to TimeInterval
 
 
 run!(simulation, pickup = false)
@@ -592,6 +616,8 @@ T_t = FieldTimeSeries(output_filename, "T")
 S_t = FieldTimeSeries(output_filename, "S")
 ρ_t = FieldTimeSeries(output_filename, "ρ")
 A_t = FieldTimeSeries(output_filename, "A")
+b_t = FieldTimeSeries(output_filename, "b")
+ν_t = FieldTimeSeries(output_filename, "ν")
 times = u_t.times
 n = Observable(1)
 Observable(1)
@@ -603,11 +629,10 @@ Tₙ = @lift interior(T_t[$n], :, 1, :)
 Sₙ = @lift interior(S_t[$n], :, 1, :)
 ρₙ = @lift interior(ρ_t[$n], :, 1, :)
 Aₙ = @lift interior(A_t[$n], :, 1, :)
-
+bₙ = @lift interior(b_t[$n], :, 1, :)
+νₙ = @lift interior(ν_t[$n], :, 1, :)
 #how much of data set to plot 
 num_Data_Points = length(times)
-
-
 
 #very inefficient way of getting max/min, need to update
 T_range = getMaxAndMinEnd(T_t)
@@ -652,17 +677,17 @@ title = "Averaged Values"
 fig[0, :] = Label(fig, title)
 velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
 plotAverages(w_t, times, (Center(), Center(), Face()))
-xlims!(0, times[end]/hour)
+xlims!(0, times[end]/minute)
 fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
 temps_plot = Axis(fig[2,1], title = "Pipe Temperatures Averaged", xlabel="time(hrs)", ylabel = "Temperature(C)", width =  700)
 plotAverages(T_t, times, (Center(), Center(), Center()))
-xlims!(0, times[end]/hour)
+xlims!(0, times[end]/minute)
 scatterlines!(times, fill(TWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot,)
 scatterlines!(times, fill(TWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
 fig[2, 2] = Legend(fig, temps_plot, frame_visible = false)
 salinities_plot = Axis(fig[3, 1], title = "Pipe Salinity Averaged", xlabel="time(hrs)", ylabel = "Salinity(ppt)", width =  700)
 plotAverages(S_t, times, (Center(), Center(), Center()))
-xlims!(0, times[end]/hour)
+xlims!(0, times[end]/minute)
 scatterlines!(times, fill(SWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot)
 scatterlines!(times, fill(SWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
 fig[3, 2] = Legend(fig, salinities_plot, frame_visible = false)
@@ -730,6 +755,7 @@ z_index_three_quarter_velocities = getZIndex(w_velocity_nodes, -pipe_top_depth -
 tracer_nodes = nodes(T_t[1].grid, (Center(), Center(), Center()), reshape = true)
 x_pipe_range_tracer= getPipeAndWallXIndexRange(tracer_nodes) 
 x_plot_range_tracer = tracer_nodes[1][(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4)]#gives a 4 cell halo
+z_index_tenth_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.1 * pipe_length)) 
 z_index_quarter_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.25 * pipe_length)) 
 z_index_half_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.5 * pipe_length)) 
 z_index_three_quarter_tracer = getZIndex(tracer_nodes, -pipe_top_depth - (0.75 * pipe_length)) 
@@ -1040,6 +1066,115 @@ save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
 
 #plot lines showing velocity at different heights
 #plot bar showing average flux through pipe
+
+
+
+
+#uutility functions again 
+#this function gives you an x index closest to x spacing coordinate - TODO: can make a lot faster via a search that halves things 
+function getXIndex(fieldNodes, xCoord)
+    for i in 1 : length(fieldNodes[1])
+        if(abs(fieldNodes[1][i] - xCoord) <= 1.01(x_grid_spacing/2)) #1.10 adjusts for some rounding issue with centers 
+            return i
+        end
+    end
+    throw("index not found for given z value")
+end
+#this function gets you the max and min in pipe for an array 
+function getMaxAndMinInPipeArr(arr, x_range::UnitRange, z_range::UnitRange)
+    myMax = maximum(arr[x_range, z_range])
+    myMin = minimum(arr[x_range, z_range])
+    return (myMin, myMax)
+end
+#extract readable fields 
+# ν = adapt(Array, interior(viscous_field, :, 1, :))
+# b = adapt(Array, interior(buoyancy_field, :, 1, :))
+#get max and min of the two to plot on the same scale
+ν_range = getMaxAndMinInPipe(num_Data_Points, ν_t, (x_pipe_range_tracer[2]:x_pipe_range_tracer[3]), (getZIndex(w_velocity_nodes, -pipe_bottom_depth)):(getZIndex(w_velocity_nodes, -pipe_top_depth)))
+b_range = getMaxAndMinInPipe(num_Data_Points, b_t, (x_pipe_range_tracer[2]:x_pipe_range_tracer[3]), (getZIndex(w_velocity_nodes, -pipe_bottom_depth)):(getZIndex(w_velocity_nodes, -pipe_top_depth)))
+bν_colorbar_range = (-max(abs(ν_range[1]), abs(ν_range[2]), abs(b_range[1]), abs(b_range[2])), max(abs(ν_range[1]), abs(ν_range[2]), abs(b_range[1]), abs(b_range[2]))) #this makes the two nearly unreadable  
+#plot them
+x, y, z = nodes(viscous_field)
+fig = Figure(size = (1200, 700))
+axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=1300)
+title = @sprintf("Components of w momentum equation @ t = %1.2f minutes", times[end]/minute) #could also use model.clock.time
+axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=300)
+fig[0, 1:4] = Label(fig, title)
+#viscous component
+ax_ν = Axis(fig[1, 1]; title="viscous component", axis_kwargs...)
+ν = adapt(Array, interior(viscous_field, :, 1, :))
+hm_ν = heatmap!(ax_ν, x, z, νₙ; colorrange = bν_colorbar_range, colormap=:balance)
+xlims!(ax_ν,(x_center - pipe_radius - pipe_wall_thickness - (0.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (0.5 * pipe_radius)))
+ylims!(ax_ν, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+# Colorbar(fig[1,2], hm_ν, label="m^2/s")
+#buoyancy component 
+ax_b = Axis(fig[1, 2]; title="Buoyancy component", axis_kwargs...)
+hm_b = heatmap!(ax_b, x, z, bₙ; colorrange = bν_colorbar_range, colormap=:balance)
+xlims!(ax_b,(x_center - pipe_radius - pipe_wall_thickness - (0.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (0.5 * pipe_radius)))
+ylims!(ax_b, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+hideydecorations!(ax_b, grid = false)
+# Colorbar(fig[1,4], hm_b, label="m^2/s")
+#buoyancy + viscous componnent
+ax_bν = Axis(fig[1, 3]; title="Buoyancy + Viscous component", axis_kwargs...)
+hm_bν = heatmap!(ax_bν, x, z, νₙ + bₙ; colorrange = bν_colorbar_range, colormap=:balance)
+xlims!(ax_bν,(x_center - pipe_radius - pipe_wall_thickness - (0.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (0.5 * pipe_radius)))
+ylims!(ax_bν, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+hideydecorations!(ax_bν, grid = false)
+Colorbar(fig[1,4], hm_bν, label="m^2/s")
+fig
+@info "Making viscosity and buoyancy heatmap animation"
+frames = 1:length(times)
+record(fig, joinpath(pathname,"componentsHeatmap.mp4"), frames, framerate=8) do i
+    @info string("Plotting frame ", i, " of ", frames[end])
+    n[] = i
+end
+
+
+#plot cross sections 
+#extract cross sections
+# ν_tenth =  ν[(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , z_index_tenth_tracer]
+# ν_quarter =  ν[(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , z_index_quarter_tracer]
+# ν_half =  ν[(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , z_index_half_tracer]
+# ν_three_quarter=  ν[(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , z_index_three_quarter_tracer]
+# b_tenth =  b[(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , z_index_tenth_tracer]
+# b_quarter =  b[(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , z_index_quarter_tracer]
+# b_half =  b[(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , z_index_half_tracer]
+# b_three_quarter= b[(x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , z_index_three_quarter_tracer]
+# w_tenth =  interior(w_t[end], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_tenth_velocities)
+# w_quarter =  interior(w_t[end], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_quarter_velocities)
+# w_half=  interior(w_t[end], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_half_velocities)
+# w_three_quarter =  interior(w_t[end], (x_pipe_range_velocities[1] - 4):(x_pipe_range_velocities[4] + 4) , 1, z_index_three_quarter_velocities)
+νₙ_half =  @lift interior(ν_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , 1, z_index_half_tracer)
+bₙ_half = @lift interior(b_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , 1, z_index_half_tracer)
+
+
+fig = Figure(size = (1000, 600))
+# myTicksBIG = -pipe_radius : pipe_radius/10: pipe_radius
+# myTicksSMALL = -pipe_radius : pipe_radius/5: pipe_radius
+kwargsBIG = (; xminorticks = IntervalsBetween(10), xminorticksvisible = true, xminorgridvisible = true)
+kwargs =(; xminorticks = IntervalsBetween(5), xminorticksvisible = true, xminorgridvisible = true)
+title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
+fig[0, 1:4] = Label(fig, title)
+cross_velocities_plot= Axis(fig[1,1:3], title = "w Momentum components @ 0.5 pipe", xlabel="x (m), centered at pipe center", ylabel = "acceleration m^2/s", width =  600; kwargsBIG...)
+scatterlines!((x_plot_range_velocities .- x_center), νₙ_half, label = "viscous component", color = colors = :blue, markersize = 5)
+scatterlines!((x_plot_range_velocities .- x_center), bₙ_half, label = "Buoyancy component", color = colors = :red, markersize = 5)
+#scatterlines!((x_plot_range_velocities .- x_center), w_half, label = "w_velocity", color = colors = :black, markersize = 5)
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
+ylims!(bν_colorbar_range[1], bν_colorbar_range[2])
+fig[1, 4] = Legend(fig, cross_velocities_plot, frame_visible = false)
+fig
+@info "Making viscosity and buoyancy plot animation"
+frames = 1:length(times)
+record(fig, joinpath(pathname,"componentsPlot.mp4"), frames, framerate=8) do i
+    @info string("Plotting frame ", i, " of ", frames[end])
+    n[] = i
+end
+
+
+
 
 
 
