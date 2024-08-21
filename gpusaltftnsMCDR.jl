@@ -28,7 +28,7 @@ const minute = 60;
 #search #SIMILITUDE to change things for similutde theories 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "SIMILITUDE ORIG with components"
+trial_name = "SIMILITUDE ORIG with components neg start"
 mkdir(joinpath("Trials", (trial_name)))
 pathname = joinpath("Trials", (trial_name))
 filename = joinpath(pathname, "data")
@@ -43,7 +43,7 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 5hour
-run_duration = 10hour
+run_duration = 4hour
 output_interval = 1minute
 """DOMAIN SIZE & SETUP"""
 const domain_x = 0.7;#SIMILITUDE
@@ -378,7 +378,10 @@ function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Funct
 end 
 
 # const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, max_grid_spacing, SWaterColumn, TWaterColumn)
-const pipeTGrad = 0.0418#similitude 0.0418 for 1m long 
+#const pipeTGrad = 0.0418#similitude 0.0418 for 1m long 
+
+const pipeTGrad = 0.02
+
 function T_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return TWaterColumn(-pipe_bottom_depth) + (pipeTGrad * (z + pipe_bottom_depth))
@@ -583,9 +586,9 @@ end
     #return _νᶜᶜᶜ(i, j, k, grid, model.closure, model.diffusivity_fields, model.clock)  * ∇²ᶜᶜᶜ(i, j, k, grid, model.velocities.w)
     return _νᶜᶜᶜ(i, j, k, grid, closure, nothing, clock)  * ∇²ᶜᶜᶜ(i, j, k, grid, velocities)
 end
-viscousArgs = (model.closure, model.clock, model.velocities.w)
-viscous_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(ViscousComponent, model.grid, viscousArgs...)
-ν= Field(viscous_component_kernel_op)
+w_viscousArgs = (model.closure, model.clock, model.velocities.w)
+w_viscous_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(ViscousComponent, model.grid, w_viscousArgs...)
+ν= Field(w_viscous_component_kernel_op)
 #viscous_field = compute!(ν_component)
 #this computes the buoyancy relative to the point stationary outside --> not right, but how?
 @inline function wcBuoyancy(i, j, k, grid, b::SeawaterBuoyancy, tracer_fields)
@@ -606,6 +609,11 @@ buoyancyArgs = (myBuoyancy, model.tracers, wc_index) #for some reason model.buoy
 buoyancy_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(BuoyancyComponent, model.grid, buoyancyArgs...)
 b = Field(buoyancy_component_kernel_op)
 #buoyancy_field = compute!(b_component)
+
+
+
+
+
 
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A, ν, b); filename, schedule=TimeInterval(output_interval), overwrite_existing=true) #can also set to TimeInterval
 
@@ -640,6 +648,7 @@ Sₙ = @lift interior(S_t[$n], :, 1, :)
 Aₙ = @lift interior(A_t[$n], :, 1, :)
 bₙ = @lift interior(b_t[$n], :, 1, :)
 νₙ = @lift interior(ν_t[$n], :, 1, :)
+bνₙ= @lift (interior(ν_t[$n], :, 1, :) + interior(b_t[$n], :, 1, :))
 #how much of data set to plot 
 num_Data_Points = length(times)
 
@@ -686,17 +695,17 @@ title = "Averaged Values"
 fig[0, :] = Label(fig, title)
 velocities_plot= Axis(fig[1,1], title = "Pipe Velocities Averaged", xlabel="time(hrs)", ylabel = "velocities (m/s)", width =  700)
 plotAverages(w_t, times, (Center(), Center(), Face()))
-xlims!(0, times[end]/minute)
+xlims!(0, times[end]/hour)
 fig[1, 2] = Legend(fig, velocities_plot, frame_visible = false)
 temps_plot = Axis(fig[2,1], title = "Pipe Temperatures Averaged", xlabel="time(hrs)", ylabel = "Temperature(C)", width =  700)
 plotAverages(T_t, times, (Center(), Center(), Center()))
-xlims!(0, times[end]/minute)
+xlims!(0, times[end]/hour)
 scatterlines!(times, fill(TWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot,)
 scatterlines!(times, fill(TWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
 fig[2, 2] = Legend(fig, temps_plot, frame_visible = false)
 salinities_plot = Axis(fig[3, 1], title = "Pipe Salinity Averaged", xlabel="time(hrs)", ylabel = "Salinity(ppt)", width =  700)
 plotAverages(S_t, times, (Center(), Center(), Center()))
-xlims!(0, times[end]/minute)
+xlims!(0, times[end]/hour)
 scatterlines!(times, fill(SWaterColumn(0), length(times)), label = "surface value", color = :maroon1, markersize = 0, linestyle = :dashdotdot)
 scatterlines!(times, fill(SWaterColumn(-domain_z), length(times)), label = "bottom value", color = :mediumpurple2, markersize = 0, linestyle = :dashdotdot)
 fig[3, 2] = Legend(fig, salinities_plot, frame_visible = false)
@@ -785,7 +794,7 @@ function getMaxAndMinInPipe(numPoints, dataSeries, x_range::UnitRange, z_range::
     end
     return (myMin, myMax)
 end
-w_pipe_range = getMaxAndMinInPipe(num_Data_Points, w_t, (x_pipe_range_velocities[2]):(x_pipe_range_velocities[3]), (getZIndex(w_velocity_nodes, -pipe_bottom_depth)):(getZIndex(w_velocity_nodes, -pipe_top_depth)))
+w_pipe_range = getMaxAndMinInPipe(num_Data_Points, w_t, (x_pipe_range_velocities[2]):(x_pipe_range_velocities[3]), (getZIndex(w_velocity_nodes, -pipe_bottom_depth + 0.01)):(getZIndex(w_velocity_nodes, -pipe_top_depth - 0.01)))
 
 fig = Figure(size = (1000, 600))
 # myTicksBIG = -pipe_radius : pipe_radius/10: pipe_radius
@@ -1092,14 +1101,16 @@ end
 # ν = adapt(Array, interior(viscous_field, :, 1, :))
 # b = adapt(Array, interior(buoyancy_field, :, 1, :))
 #get max and min of the two to plot on the same scale
-ν_range = getMaxAndMinInPipe(num_Data_Points, ν_t, (x_pipe_range_tracer[2]:x_pipe_range_tracer[3]), (getZIndex(w_velocity_nodes, -pipe_bottom_depth)):(getZIndex(w_velocity_nodes, -pipe_top_depth)))
-b_range = getMaxAndMinInPipe(num_Data_Points, b_t, (x_pipe_range_tracer[2]:x_pipe_range_tracer[3]), (getZIndex(w_velocity_nodes, -pipe_bottom_depth)):(getZIndex(w_velocity_nodes, -pipe_top_depth)))
+#not quite max and min in pipe, cuts out very top and bottom 
+ν_range = getMaxAndMinInPipe(num_Data_Points, ν_t, (x_pipe_range_tracer[2]:x_pipe_range_tracer[3]), (getZIndex(w_velocity_nodes, -pipe_bottom_depth + 0.01)):(getZIndex(w_velocity_nodes, -pipe_top_depth - 0.01)))
+b_range = getMaxAndMinInPipe(num_Data_Points, b_t, (x_pipe_range_tracer[2]:x_pipe_range_tracer[3]), (getZIndex(w_velocity_nodes, -pipe_bottom_depth + 0.01)):(getZIndex(w_velocity_nodes, -pipe_top_depth - 0.01)))
 bν_colorbar_range = (-max(abs(ν_range[1]), abs(ν_range[2]), abs(b_range[1]), abs(b_range[2])), max(abs(ν_range[1]), abs(ν_range[2]), abs(b_range[1]), abs(b_range[2]))) #this makes the two nearly unreadable  
+
+
 #plot them
 x, y, z = nodes(ν_t[1])
 fig = Figure(size = (1200, 700))
-axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=1300)
-title = @sprintf("Components of w momentum equation @ t = %1.2f minutes", times[end]/minute) #could also use model.clock.time
+title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
 axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=300)
 fig[0, 1:4] = Label(fig, title)
 #viscous component
@@ -1119,13 +1130,13 @@ vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][
 hideydecorations!(ax_b, grid = false)
 # Colorbar(fig[1,4], hm_b, label="m^2/s")
 #buoyancy + viscous componnent
-# ax_bν = Axis(fig[1, 3]; title="Buoyancy + Viscous component", axis_kwargs...)
-# hm_bν = heatmap!(ax_bν, x, z, νₙ + bₙ; colorrange = bν_colorbar_range, colormap=:balance)
-# xlims!(ax_bν,(x_center - pipe_radius - pipe_wall_thickness - (0.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (0.5 * pipe_radius)))
-# ylims!(ax_bν, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
-# vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
-# hideydecorations!(ax_bν, grid = false)
-# Colorbar(fig[1,4], hm_bν, label="m^2/s")
+ax_bν = Axis(fig[1, 3]; title="Buoyancy + Viscous component", axis_kwargs...)
+hm_bν = heatmap!(ax_bν, x, z, bνₙ; colorrange = bν_colorbar_range, colormap=:balance)
+xlims!(ax_bν,(x_center - pipe_radius - pipe_wall_thickness - (0.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (0.5 * pipe_radius)))
+ylims!(ax_bν, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+hideydecorations!(ax_bν, grid = false)
+Colorbar(fig[1,4], hm_bν, label="m^2/s")
 fig
 @info "Making viscosity and buoyancy heatmap animation"
 frames = 1:length(times)
@@ -1152,6 +1163,8 @@ end
 νₙ_half =  @lift interior(ν_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , 1, z_index_half_tracer)
 bₙ_half = @lift interior(b_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , 1, z_index_half_tracer)
 
+νₙ_three_quarter =  @lift interior(ν_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , 1, z_index_three_quarter_tracer)
+bₙ_three_quarter = @lift interior(b_t[$n], (x_pipe_range_tracer[1] - 4):(x_pipe_range_tracer[4] + 4) , 1, z_index_three_quarter_tracer)
 
 fig = Figure(size = (1000, 600))
 # myTicksBIG = -pipe_radius : pipe_radius/10: pipe_radius
@@ -1160,20 +1173,93 @@ kwargsBIG = (; xminorticks = IntervalsBetween(10), xminorticksvisible = true, xm
 kwargs =(; xminorticks = IntervalsBetween(5), xminorticksvisible = true, xminorgridvisible = true)
 title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
 fig[0, 1:4] = Label(fig, title)
-cross_velocities_plot= Axis(fig[1,1:3], title = "w Momentum components @ 0.5 pipe", xlabel="x (m), centered at pipe center", ylabel = "acceleration m^2/s", width =  600; kwargsBIG...)
-scatterlines!((x_plot_range_velocities .- x_center), νₙ_half, label = "viscous component", color = colors = :blue, markersize = 5)
-scatterlines!((x_plot_range_velocities .- x_center), bₙ_half, label = "Buoyancy component", color = colors = :red, markersize = 5)
-#scatterlines!((x_plot_range_velocities .- x_center), w_half, label = "w_velocity", color = colors = :black, markersize = 5)
+cross_components_plot= Axis(fig[1,1:3], title = "w Momentum components @ 0.5 pipe", xlabel="x (m), centered at pipe center", ylabel = "acceleration m^2/s", width =  600; kwargsBIG...)
+scatterlines!((x_plot_range_velocities .- x_center), νₙ_three_quarter, label = "viscous component", color = colors = :blue, markersize = 5)
+scatterlines!((x_plot_range_velocities .- x_center), bₙ_three_quarter, label = "Buoyancy component", color = colors = :red, markersize = 5)
 vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[1]] - x_center),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1] - x_center) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1] - x_center)], label = "pipe side walls", color = :deeppink2, linewidth = 5)
 ylims!(bν_colorbar_range[1], bν_colorbar_range[2])
-fig[1, 4] = Legend(fig, cross_velocities_plot, frame_visible = false)
+cross_velocities_plot= Axis(fig[1,1:3], ylabel = "w velocity m/s", yaxisposition = :right)
+hidespines!(cross_velocities_plot)
+hidexdecorations!(cross_velocities_plot)
+scatterlines!((x_plot_range_velocities .- x_center), wₙ_three_quarter , label = "w_velocity", color = colors = :black, markersize = 5)
+ylims!(-max(abs(w_pipe_range[1]), abs(w_pipe_range[2])), max(abs(w_pipe_range[1]), abs(w_pipe_range[2])))
+fig[1, 4] = Legend(fig, cross_components_plot, frame_visible = false)
 fig
 @info "Making viscosity and buoyancy plot animation"
 frames = 1:length(times)
-record(fig, joinpath(pathname,"componentsPlot.mp4"), frames, framerate=8) do i
+record(fig, joinpath(pathname,"componentsPlotThreeQuarter.mp4"), frames, framerate=8) do i
     @info string("Plotting frame ", i, " of ", frames[end])
     n[] = i
 end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#the stuff below just plots one moment in time 
+#GOAL: plot vorticity 
+#some stuff for calculating the currently
+compute!(ν)
+compute!(b)
+νb_w = Field(ν + b)
+compute!(νb_w) #buoyancy and viscous field for w momentum
+
+u_viscousArgs = (model.closure, model.clock, model.velocities.u)
+u_viscous_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(ViscousComponent, model.grid, u_viscousArgs...)
+ν_u = Field(u_viscous_component_kernel_op)
+compute!(ν_u) #vicous momentum equation in X
+
+ω = Field(-∂x(νb_w) + ∂z(ν_u)) ##angular 
+compute!(ω)
+
+
+x, y, z = nodes(ν_t[1])
+fig = Figure(size = (1200, 700))
+title = @lift @sprintf("t = %1.2f minutes", round(times[$n] / minute, digits=2))
+axis_kwargs = (xlabel="x (m)", ylabel="z (m)", width=300)
+fig[0, 1:4] = Label(fig, title)
+#w momentum 
+ax_ν = Axis(fig[1, 1]; title="w", axis_kwargs...)
+νb_w = adapt(Array, interior(νb_w, :, 1, :))
+hm_ν = heatmap!(ax_ν, x, z, νb_w; colorrange = bν_colorbar_range, colormap=:balance)
+xlims!(ax_ν,(x_center - pipe_radius - pipe_wall_thickness - (0.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (0.5 * pipe_radius)))
+ylims!(ax_ν, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+# Colorbar(fig[1,2], hm_ν, label="m^2/s")
+#u momentum
+ax_b = Axis(fig[1,2]; title="u", axis_kwargs...)
+ν_u = adapt(Array, interior(ν_u, :, 1, :))
+hm_b = heatmap!(ax_b, x, z, ν_u; colorrange = bν_colorbar_range, colormap=:balance)
+xlims!(ax_b,(x_center - pipe_radius - pipe_wall_thickness - (0.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (0.5 * pipe_radius)))
+ylims!(ax_b, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+hideydecorations!(ax_b, grid = false)
+Colorbar(fig[1,3], hm_bν, label="m^2/s")
+# Colorbar(fig[1,4], hm_b, label="m^2/s")
+#buoyancy + viscous componnent
+ax_bν = Axis(fig[1, 4]; title="curl of momentum equations", axis_kwargs...)
+ω = adapt(Array, interior(ω, :, 1, : ))
+ω_colorbar_range = getMaxAndMinInPipeArr(ω, x_pipe_range_tracer[2]:x_pipe_range_tracer[3], getZIndex(tracer_nodes, -pipe_bottom_depth + 0.01):getZIndex(tracer_nodes, -pipe_top_depth - 0.01))
+hm_bν = heatmap!(ax_bν, x, z, ω; colorrange = bν_colorbar_range, colormap=:balance)
+xlims!(ax_bν,(x_center - pipe_radius - pipe_wall_thickness - (0.5 * pipe_radius)), (x_center + pipe_radius + pipe_wall_thickness + (0.5 * pipe_radius)))
+ylims!(ax_bν, (-pipe_bottom_depth - (8 * pipe_radius)), (-pipe_top_depth + (8 * pipe_radius)))  #note that this is still using old grid from T, S, initial, may need to recompute x and z using specific nodes 
+vlines!([(w_velocity_nodes[1][x_pipe_range_velocities[4]]),(w_velocity_nodes[1][x_pipe_range_velocities[1]]),(w_velocity_nodes[1][x_pipe_range_velocities[2] - 1]) , (w_velocity_nodes[1][x_pipe_range_velocities[3] + 1])], label = "pipe side walls", color = :deeppink2, linewidth = 1)
+hideydecorations!(ax_bν, grid = false)
+Colorbar(fig[1,5], hm_bν, label="m^2/s")
+fig
+
+
+
 
 
 
