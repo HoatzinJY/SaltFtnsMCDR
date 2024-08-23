@@ -28,7 +28,7 @@ const minute = 60;
 #search #SIMILITUDE to change things for similutde theories 
 #IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
 """NAME"""
-trial_name = "SIMILITUDE ORIG components with stopper try one"
+trial_name = "SIMILITUDE to big"
 mkdir(joinpath("Trials", (trial_name)))
 pathname = joinpath("Trials", (trial_name))
 filename = joinpath(pathname, "data")
@@ -43,11 +43,11 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 5hour
-run_duration = 1minute
-output_interval = 15
+run_duration = 2minute
+output_interval = 1
 """DOMAIN SIZE & SETUP"""
-const domain_x = 0.7;#SIMILITUDE
-const domain_z = 2; #SIMILITUDE
+const domain_x = 0.07;#SIMILITUDE
+const domain_z = 3.1; #SIMILITUDE
 # const domain_z = 220; #BIG
 const x_center = domain_x/2;
 #max_grid_spacing = 0.02; #TODO: figure out what this needs to be set to 
@@ -57,9 +57,9 @@ struct PipeWallData
     thermal_diffusivity :: Float64
     thickness :: Float64
 end
-const pipe_radius = 0.02 #SIMILITUDE
-const pipe_length = 1 #SIMILITUDE
-const pipe_top_depth = 0.5 #SIMILITUDE
+const pipe_radius = 0.0015 #SIMILITUDE
+const pipe_length = 2.7 #SIMILITUDE
+const pipe_top_depth = 0.2 #SIMILITUDE
 # const pipe_length = 200 #BIG
 # const pipe_top_depth = 10 #BIG
 const pipe_wall_thickness_intended = 0.005
@@ -82,8 +82,8 @@ struct SeawaterDiffusivityData
 end
 const eddy_horizontal_diffusivity = 5e2 #not used
 const eddy_vertical_diffusivity = 1e-5 #not used
-const sw_viscosity_molecular =  1.05e-6 #SIMILITUDE
-const sw_T_diffusivity_molecular = 1.46e-7 #SIMILITUDE
+const sw_viscosity_molecular =  1.05e-6 * sqrt(5.4e-6)#SIMILITUDE
+const sw_T_diffusivity_molecular = 1.46e-7 * sqrt(5.4e-6)#SIMILITUDE
 #const sw_T_diffusivity_molecular = 1e-5 # as per the experimental data in papers Zhang 2004
 const sw_S_diffusivity_molecular = 1.3e-9 
 const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
@@ -97,7 +97,7 @@ const S_top = 35.22;
 # const S_bot = 34.18;
 # const S_top = 36.601543;
 const delta_z = 200; 
-const delta_z_multiplier = 1; #SIMILITUDE
+const delta_z_multiplier = 1/2; #SIMILITUDE
 
 function TWaterColumn(z)
     if (z > -pipe_top_depth)
@@ -205,7 +205,7 @@ oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
 oscillation_period = 2π/oscillation_angular_frequency
 @info @sprintf("N = %.3e rad/sec | Buoyancy Oscillation period: %.3f minutes",  oscillation_angular_frequency, oscillation_period/minute)
 #grid spacing desired
-max_grid_spacing = 0.001
+max_grid_spacing = 0.0001 #SIMILITUDE
 #max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
 @info @sprintf("Max Grid Spacing: %.3em", max_grid_spacing)
 my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
@@ -283,8 +283,8 @@ function isPipeWall(x, z)
     vert_range = -(pipe_top_depth + pipe_length) .. -(pipe_top_depth)
     if ((in(x, left_wall_range) || in(x, right_wall_range)) && in(z, vert_range))
         return true
-    # elseif (isStopper(x, z))
-    #     return true
+    elseif (isStopper(x, z))
+        return true
     else
         return false
     end
@@ -298,6 +298,8 @@ function pipeWallMask(x,z)
 end
 function pipeWallVelocityMask(x, z)
     if (!isInsidePipe(x, z) && ((-pipe_bottom_depth) < z < (-pipe_top_depth)) && !isSidePipe(x, z))
+        return 1
+    elseif (isInsidePipe(x, z) && isPipeWall(x, z)) #this is for the stopper that is for flow sepparation 
         return 1
     else
         return 0
@@ -390,7 +392,7 @@ function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Funct
 end 
 
 # const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, max_grid_spacing, SWaterColumn, TWaterColumn)
-const pipeTGrad = 0.0418#similitude 0.0418 for 1m long 
+const pipeTGrad = 0.0206#similitude 0.0418 for 1m long 
 
  #const pipeTGrad = 0.02
 
