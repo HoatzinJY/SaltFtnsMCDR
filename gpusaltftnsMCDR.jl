@@ -43,8 +43,8 @@ const GPU_memory = 12
 
 """SIMULATION RUN INFORMATION"""
 simulation_duration = 5hour
-run_duration = 2minute
-output_interval = 1
+run_duration = 4minute
+output_interval = 0.1
 """DOMAIN SIZE & SETUP"""
 const domain_x = 0.07;#SIMILITUDE
 const domain_z = 3.1; #SIMILITUDE
@@ -62,7 +62,7 @@ const pipe_length = 2.7 #SIMILITUDE
 const pipe_top_depth = 0.2 #SIMILITUDE
 # const pipe_length = 200 #BIG
 # const pipe_top_depth = 10 #BIG
-const pipe_wall_thickness_intended = 0.005
+const pipe_wall_thickness_intended = 0.0005 #Similitude, 0.005 orig
 const pipe_bottom_depth = pipe_top_depth + pipe_length
 const wall_material_ρ = 8900
 const wall_material_cₚ = 376.812 
@@ -636,6 +636,7 @@ simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ,
 run!(simulation, pickup = false)
 # simulation.wall_time_limit +=10hour
 # run!(simulation)
+
 
 
 #visualize simulation
