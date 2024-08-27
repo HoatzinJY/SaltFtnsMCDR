@@ -58,10 +58,10 @@ output_interval = 10
 
 
 """DOMAIN SIZE & SETUP"""
-const domain_x = 0.06;#SIMILITUDE #orig 0.7
-const domain_z = 3; #SIMILITUDE #orig 2
+const domain_x = 0.7;#SIMILITUDE #orig 0.7
+const domain_z = 2; #SIMILITUDE #orig 2
 const x_center = domain_x/2;
-const max_grid_spacing = 0.0001 #SIMILITUDE. Somewhat of a misnomer, this will effectively be the grid spacing
+const max_grid_spacing = 0.001 #SIMILITUDE orig 0.001. Somewhat of a misnomer, this will effectively be the grid spacing
 
 
 
@@ -71,10 +71,10 @@ struct PipeWallData
     thermal_diffusivity :: Float64
     thickness :: Float64
 end
-const pipe_radius = 0.0015 #SIMILITUDE #orig 0.02
-const pipe_length = 2.7 #SIMILITUDE #oric 1
-const pipe_top_depth = 0.15 #SIMILITUDE #orig 0.5 
-const pipe_wall_thickness_intended = 0.0003 #Similitude, 0.005 orig
+const pipe_radius = 0.02 #SIMILITUDE #orig 0.02
+const pipe_length = 1 #SIMILITUDE #oric 1
+const pipe_top_depth = 0.5 #SIMILITUDE #orig 0.5 
+const pipe_wall_thickness_intended = 0.005 #Similitude, 0.005 orig
 const pipe_bottom_depth = pipe_top_depth + pipe_length
 const wall_material_ρ = 8900
 const wall_material_cₚ = 376.812 
@@ -96,8 +96,8 @@ struct SeawaterDiffusivityData
 end
 const eddy_horizontal_diffusivity = 5e2 #not used
 const eddy_vertical_diffusivity = 1e-5 #not used
-const sw_viscosity_molecular =  1.05e-6 * sqrt(5.4e-6)#SIMILITUDE
-const sw_T_diffusivity_molecular = 1.46e-7 * sqrt(5.4e-6)#SIMILITUDE, note that this is 1e-5 per experimental data Zhang 2004
+const sw_viscosity_molecular =  1.05e-6 #SIMILITUDE
+const sw_T_diffusivity_molecular = 1.46e-7 #SIMILITUDE, note that this is 1e-5 per experimental data Zhang 2004
 const sw_S_diffusivity_molecular = 1.3e-9 
 const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
 
@@ -109,7 +109,7 @@ const T_bot = 11.86;
 const S_bot = 34.18;
 const S_top = 35.22;
 const delta_z = 200; #distance between top & bottom measurements
-const delta_z_multiplier = 1/2; #SIMILITUDE, smaller => steeper gradeint 
+const delta_z_multiplier = 1; #SIMILITUDE, smaller => steeper gradeint 
 
 #=
 TWaterColumn & SWaterColumn give you the background water column temperature & salinity properties 
@@ -308,7 +308,7 @@ const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing
 #this option below uses a iterative strategy, where you run it once, and then take the max velocity, and use predictions from that
 #note that a higher prediced vmax = a shorter max time step (higher temporal resolution). Also note that generally, it seems like you want to 
 #use a higher vmax predicted than what is the actual vmax especially at small scales, for higher temporal resolution. 
-#0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
+#0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.001 seems good for small lab scale
 v_max_predicted = 0.001 #SIMILITUDE 
 min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted 
 max_time_step_allowed = 2 * min_time_step_predicted #manually set maximum time step  to be 2 * predicted minimum, so that the relaxation time scale can be set close to the time step
@@ -761,7 +761,7 @@ new_max_time_step = min(0.2 * diffusion_time_scale, 0.2 * viscous_time_scale, ma
 # initial_advection_time_scale = min_grid_spacing/v_max_predicted
 # initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed) #sets it to be 1/2 of satisfying all CFLs & max time step allowed
 #the following instead allows you to set it manually, which is used now. It shoudl be set to be pretty small to allow the viscous boundary layers to resolve initially. 
-initial_time_step = 0.000005 #SIMILITUDE 0.0048 for 1m 0.02R
+initial_time_step = 0.0048 #SIMILITUDE 0.0048 for 1m 0.02R
 
 #initiate simulation
 simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration)
