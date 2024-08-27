@@ -1,3 +1,4 @@
+#import relevant packages and functions 
 using Pkg
 using Oceananigans
 using OceanBioME
@@ -21,53 +22,66 @@ using Adapt
 using Oceananigans.Grids: NegativeZDirection, validate_unit_vector
 using Oceananigans.BuoyancyModels: buoyancy_perturbationᶜᶜᶜ, get_temperature_and_salinity, ρ′
 
+
+#constants for ease of code use 
 const day = 86400;
 const hour = 3600;
 const minute = 60;
 
 #search #SIMILITUDE to change things for similutde theories 
-#IMPORTANT, IF WRITE DISCRETE FORCER HERE, NEED TO BE CAREFUL ABOUT CUARRAY VS ARRAY AND ADAPT THE CUARRAY OVER
+#assume base SI units for anything that is unspecified (including time, in s)
+#base/original parameters used to develop model are commented on the side 
+
+
+
 """NAME"""
-trial_name = "SIMILITUDE to big"
+#this section creates folder that saves simulation data to. it assumes that you have created a 
+#folder in the current directory titled "Trials" to store the data in 
+trial_name = "SIMILITUDE to big longer"
 mkdir(joinpath("Trials", (trial_name)))
 pathname = joinpath("Trials", (trial_name))
 filename = joinpath(pathname, "data")
-#next run wih min 0.003, and then 2x
-#then with 0.1, and 2x
 
-#for full size model
-#try 30m x 300m
+
 
 """COMPUTER parameters"""
+#to ensure you don't overload on the grid points 
 const GPU_memory = 12
 
-"""SIMULATION RUN INFORMATION"""
-simulation_duration = 5hour
-run_duration = 4minute
-output_interval = 0.1
-"""DOMAIN SIZE & SETUP"""
-const domain_x = 0.07;#SIMILITUDE
-const domain_z = 3.1; #SIMILITUDE
-# const domain_z = 220; #BIG
-const x_center = domain_x/2;
-#max_grid_spacing = 0.02; #TODO: figure out what this needs to be set to 
 
-"""PIPE SIZE AND SETUP"""
-struct PipeWallData
+
+"""SIMULATION RUN INFORMATION"""
+simulation_duration = 1hour 
+run_duration = 12hour #wall time
+output_interval = 10 
+
+
+
+"""DOMAIN SIZE & SETUP"""
+const domain_x = 0.06;#SIMILITUDE #orig 0.7
+const domain_z = 3; #SIMILITUDE #orig 2
+const x_center = domain_x/2;
+const max_grid_spacing = 0.0001 #SIMILITUDE. Somewhat of a misnomer, this will effectively be the grid spacing
+
+
+
+"""PIPE PROPERTY INFORMATION"""
+#to store physical properties of pipe wall materials 
+struct PipeWallData 
     thermal_diffusivity :: Float64
     thickness :: Float64
 end
-const pipe_radius = 0.0015 #SIMILITUDE
-const pipe_length = 2.7 #SIMILITUDE
-const pipe_top_depth = 0.2 #SIMILITUDE
-# const pipe_length = 200 #BIG
-# const pipe_top_depth = 10 #BIG
-const pipe_wall_thickness_intended = 0.0005 #Similitude, 0.005 orig
+const pipe_radius = 0.0015 #SIMILITUDE #orig 0.02
+const pipe_length = 2.7 #SIMILITUDE #oric 1
+const pipe_top_depth = 0.15 #SIMILITUDE #orig 0.5 
+const pipe_wall_thickness_intended = 0.0003 #Similitude, 0.005 orig
 const pipe_bottom_depth = pipe_top_depth + pipe_length
 const wall_material_ρ = 8900
 const wall_material_cₚ = 376.812 
 const wall_material_k = 50.208
 const pipe_data = PipeWallData(wall_material_k/(wall_material_cₚ*wall_material_ρ), pipe_wall_thickness_intended)
+
+
 
 """CONSTANTS AND PHYSICAL PROPERTIES"""
 #utility constants
@@ -83,10 +97,10 @@ end
 const eddy_horizontal_diffusivity = 5e2 #not used
 const eddy_vertical_diffusivity = 1e-5 #not used
 const sw_viscosity_molecular =  1.05e-6 * sqrt(5.4e-6)#SIMILITUDE
-const sw_T_diffusivity_molecular = 1.46e-7 * sqrt(5.4e-6)#SIMILITUDE
-#const sw_T_diffusivity_molecular = 1e-5 # as per the experimental data in papers Zhang 2004
+const sw_T_diffusivity_molecular = 1.46e-7 * sqrt(5.4e-6)#SIMILITUDE, note that this is 1e-5 per experimental data Zhang 2004
 const sw_S_diffusivity_molecular = 1.3e-9 
 const sw_diffusivity_data = SeawaterDiffusivityData(sw_viscosity_molecular, sw_T_diffusivity_molecular, sw_S_diffusivity_molecular)
+
 
 
 """SET BACKGROUND TEMPERATURE AND SALINITY GRADIENTS"""
@@ -94,11 +108,18 @@ const T_top = 21.67;
 const T_bot = 11.86;
 const S_bot = 34.18;
 const S_top = 35.22;
-# const S_bot = 34.18;
-# const S_top = 36.601543;
-const delta_z = 200; 
-const delta_z_multiplier = 1/2; #SIMILITUDE
+const delta_z = 200; #distance between top & bottom measurements
+const delta_z_multiplier = 1/2; #SIMILITUDE, smaller => steeper gradeint 
 
+#=
+TWaterColumn & SWaterColumn give you the background water column temperature & salinity properties 
+respectively at depth z. Note that it follows model convention for z, such that it expects 
+surface to have depth 0 & increasingly negative depths below. Currently, it creates a linear gradient
+from the information provided above for the length of the pipe, but sets uniform properties for the region 
+above and below the pipe (the same properties as the very top/bottom of the pipe). 
+
+These functions can be edited to interpolate the information from a netcdf file. 
+=#
 function TWaterColumn(z)
     if (z > -pipe_top_depth)
         return T_top - ((T_bot - T_top) / delta_z)*(-pipe_top_depth)
@@ -108,6 +129,7 @@ function TWaterColumn(z)
         return T_top - ((T_bot - T_top) / delta_z)z
     end
 end
+
 function SWaterColumn(z)
     if (z > -pipe_top_depth)
         return S_top - ((S_bot - S_top) / (delta_z * delta_z_multiplier))*(-pipe_top_depth)
@@ -117,6 +139,7 @@ function SWaterColumn(z)
         return S_top - ((S_bot - S_top) / (delta_z * delta_z_multiplier))z
     end
 end
+
 TWaterColumn(x, z) = TWaterColumn(z)
 TWaterColumn(x, y, z) = TWaterColumn(z)
 SWaterColumn(x, z) = SWaterColumn(z)
@@ -128,12 +151,25 @@ SWaterColumnBCS(z, t) = SWaterColumn(z)
 
 
 """COMPUTATIONAL FUNCTIONS"""
+#roundup takes in two numbers num and base, and then rounds num up to the 
+#nearest multiple of base 
 roundUp(num::Float64, base) = ceil(Int, num / base) * base
+
+#findNearest finds the nearest value in array A to given value x. It returns this 
+#information as a tuple (minimum difference, [cartesian index of found closest match])
 findNearest(A::AbstractArray, x) = findmin(abs(A-x))
+
+#getXYZ returns the [x, y, z] spatial coordinates for given discrete indices of a grid. 
+#the function takes indices i, j, k, a grid, and the locations (face, center, etc) the grid
+#is evaluated at 
 function getXYZ(i, j, k, grid, locs)
     myNodes = nodes(grid, locs, reshape = true)
     return[myNodes[1][i], myNodes[2][j], myNodes[3][k]]
 end
+
+#getMaxandMin returns a tuple (minimum val, maximum val) of the values in a certain 
+#field time series for all times in the series. The function takes in numPoints (number of times
+#in time series) & dataSeries (the time series)
 function getMaxAndMin(numPoints, dataSeries)
     myMax = maximum(interior(dataSeries[1], :, 1, :))
     myMin = minimum(interior(dataSeries[1], :, 1, :))
@@ -143,16 +179,27 @@ function getMaxAndMin(numPoints, dataSeries)
     end
     return (myMin, myMax)
 end
+
+#getMaxAndMinArr returns a tuple (minimum val, maximum val) for the array that is passed in 
 function getMaxAndMinArr(arr)
     myMax = maximum(arr)
     myMin = minimum(arr)
     return (myMin, myMax)
 end
+
+#getMaxAndMinEnd returns a tuple (minimum val, maximum val) for the last dataset that is saved in 
+#the field time series dataseries that is passed in. This is generally useful for plotting, as 
+#often the largest values are seen at the end
 function getMaxAndMinEnd(dataSeries)
     myMax = maximum(interior(dataSeries[end], : , 1, :))
     myMin = minimum(interior(dataSeries[end], : , 1, :))
     return (myMin, myMax)
 end
+
+#getMaskedAverage returns the average of a field over a masked region. The function multiplies 
+#each point in the field with the value of the mask evaluated at that point. The function takes in 
+#mask(x, z) function, a field, and locs on the field that it is evaluated at. The function could be 
+#in theory used to get weighted averages, if the mask acts as the weight. 
 function getMaskedAverage(mask::Function, field, locs)
     fieldNodes = nodes(field.grid, locs, reshape = true)
     sum = 0;
@@ -167,6 +214,11 @@ function getMaskedAverage(mask::Function, field, locs)
 end
 getMaskedAverageTracer(mask::Function, field) = getMaskedAverage(mask::Function, field, (Center(), Center(), Center()))
 getMaskedAverageVelocity(mask::Function, field) = getMaskedAverage(mask::Function, field, (Face(), Face(), Face()))
+
+#getMaskedAverageAtZ does the same thing as above except it only evaluates the average of 
+#the masked area at one z location. The function takes in a mask(x, z), a field with data, locs 
+#that the data is saved at, the spatial zCoord (in m), and the spacing in the z. It will take the average 
+#of the two grid lines that "sandwich" the given zCoord
 function getMaskedAverageAtZ(mask::Function, field, locs, zCoord, z_spacings)
     fieldNodes = nodes(field.grid, locs, reshape = true)
     sum = 0;
@@ -181,12 +233,20 @@ function getMaskedAverageAtZ(mask::Function, field, locs, zCoord, z_spacings)
     end
     return sum/count
 end
-function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)#takes a positive depth
+
+#getBackgroundDensity returns the in-situ density of the unaltered water column at depth z using TEOS 10
+#The function follows convention such that z is 0 at the surface and becomes increasingly negative with depth. 
+function getBackgroundDensity(z, Tfunc::Function, Sfunc::Function)
     eos = TEOS10EquationOfState() 
-    S_abs = gsw_sa_from_sp(Sfunc(pipe_radius + 0.0001,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
+    S_abs = gsw_sa_from_sp(Sfunc(pipe_radius + 0.0001,z), gsw_p_from_z(z, 30), 31, -30) #31, -30 is a random lat/long in the ocean
     T_consv = gsw_ct_from_t(S_abs, Tfunc(pipe_radius + 0.0001,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
-    return TEOS10.ρ(T_consv, S_abs, z, eos) #note that this uses insitu s and T instead of conservative and absolute, which is what the function calls for 
+    return TEOS10.ρ(T_consv, S_abs, z, eos) 
 end
+
+#checkMemory checks if you have enough RAM to conduct the simulation. it takes in capacity (RAM available), 
+#the number of cells in the x-dir, and the number of cells in the z-dir. it will throw an error if you have
+#more cells than you have memory for. This is ONLY A ROUGH ESTIMATION, using oceananigans prediction that 
+#32gb is approximately 100 million cells. The actual number depends on data saved. 
 function checkMemory(capacity, x_cells, z_cells)
     numCells = x_cells * z_cells
     possibleCells = (capacity/32) * 100000000
@@ -196,49 +256,80 @@ function checkMemory(capacity, x_cells, z_cells)
     else 
         return numCells
     end
-end     # uses the fact that 32gb is approx 100 million cells
+end   
+
+
 
 """CALCULATE DOMAIN DETAILS AND SAVE AS CONSTANTS"""
-#find oscillation period to get relevant timescales & velocities
+#OSCILLATION PERIOD DETAILS
+#find oscillation period to get relevant timescales & velocities. Approximates via a linear density gradient from top to bottom of pipe
 surrounding_density_gradient = (getBackgroundDensity(-pipe_top_depth - pipe_length, TWaterColumn, SWaterColumn) - getBackgroundDensity(-pipe_top_depth, TWaterColumn, SWaterColumn))/pipe_length #takes average for unaltered water column across the pipe (NOT DOMAIN!)
-oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient)
-oscillation_period = 2π/oscillation_angular_frequency
+oscillation_angular_frequency =  sqrt((g/1000) * surrounding_density_gradient) #this is N, the buoyancy frequency
+oscillation_period = 2π/oscillation_angular_frequency 
 @info @sprintf("N = %.3e rad/sec | Buoyancy Oscillation period: %.3f minutes",  oscillation_angular_frequency, oscillation_period/minute)
-#grid spacing desired
-max_grid_spacing = 0.0001 #SIMILITUDE
+
+
+#VARIOUS GRID SPACING DETAILS 
+
+#option to calculate max grid spacing from predicted maximum velocities 
+#max_grid_spacing means its the largest the grid spacing can be, as in, the most coarse the resolution can be. 
+#this option below sets it to be just under the decay length scale (4κν/N^2)^(1/4) as derived from balancing momentum and buoyancy equations and assuming exponential velocity decay. Does not seem to be enough to resolve viscous layer. 
 #max_grid_spacing = 0.95*((4 * sw_diffusivity_data.T * sw_diffusivity_data.ν)/(oscillation_angular_frequency^2))^(1/4)
 @info @sprintf("Max Grid Spacing: %.3em", max_grid_spacing)
+
+#this section sets grid spacing details 
+#set to be as big as it can be(to run fastest)
 my_x_grid_spacing = max_grid_spacing; #max grid spacing is actually a bit of a misnomer, perhaps shoudl be better called min, its max in the sense that its the max resolution 
 my_z_grid_spacing = max_grid_spacing;
-#resolution
+#get num of cells in each dimension, ensuring integer number
 x_res = floor(Int, domain_x / my_x_grid_spacing);
 z_res = floor(Int, domain_z / my_z_grid_spacing);
-#grid spacing adjusted to be divisible in domain_grid
+#width of each grid 
 const x_grid_spacing = domain_x/x_res;
 const z_grid_spacing = domain_z/z_res;
-#call error if it is too large for model
+#call error if it is too many cells to compute 
 checkMemory(GPU_memory, x_res, z_res)
-#pipe wall thickness, as set by the model
+
+#set pipe wall thickness in model, by rounding up to the nearest number of grid cells to desied wall width
 const pipe_wall_thickness = roundUp(pipe_wall_thickness_intended, x_grid_spacing)
 @info @sprintf("Pipe walls are %.3e meters thick", pipe_wall_thickness)
 @info @sprintf("X spacings: %.3e meters | Z spacings: %.3e meters", x_grid_spacing, z_grid_spacing)
 @info @sprintf("X resolution: %.3e | Z resolution: %.3e ", x_res, z_res)
-#time stepping 
-#location with equivalent density
-#TODO: potentially fix that height displaced with an estimation of where the density is equal 
-#v_max_predicted = oscillation_angular_frequency * 1
-#0.03 stable
-v_max_predicted = 0.001 #SIMILITUDE this is just based on old simulations, shoudl perhaps change this. #0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
-min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted
-max_time_step_allowed = 2 * min_time_step_predicted
-#damping rate for forcers  
+
+
+#TIME STEPPING DETAILS 
+#the goal here is to predict the minimum time step required to fulfill the advective CFL, to allow a relaxation time scale 
+#as close to that as possible to reduce leakage of model. Relaxation time scale has to be longer than the longest time step. 
+
+#the option below predicts v max from the buoyancy oscillation, assuming simple harmonic motion. where vmax = angular frequency * amplitude 
+#it is no longer used as the parcel is not experience a displaced height as the initial condition. 
+#v_max_predicted = oscillation_angular_frequency * height_displaced
+
+#this option below uses a iterative strategy, where you run it once, and then take the max velocity, and use predictions from that
+#note that a higher prediced vmax = a shorter max time step (higher temporal resolution). Also note that generally, it seems like you want to 
+#use a higher vmax predicted than what is the actual vmax especially at small scales, for higher temporal resolution. 
+#0.07 for 20m long, 20cm diameter pipe #0.001 for 1m long 0.02R pipe, 0.01 seems good for small lab scale
+v_max_predicted = 0.001 #SIMILITUDE 
+min_time_step_predicted = (min(x_grid_spacing, z_grid_spacing)*CFL)/v_max_predicted 
+max_time_step_allowed = 2 * min_time_step_predicted #manually set maximum time step  to be 2 * predicted minimum, so that the relaxation time scale can be set close to the time step
+#set damping rate for forcers to be 1.1x the maximum time step allowed 
 min_relaxation_timescale = 1.1 * max_time_step_allowed
 max_relaxation_rate = 1/min_relaxation_timescale
 
+
+
 """MASKING FUNCTIONS"""
+#=these functions take in spatial coordinates (x, z) or (x, y, z) & return a number between 0 and 1 that describes
+how strong the mask is, with 0 being no mask and 1 being full mask. In terms of relaxation, one can think of 
+a weaker mask as the equivalent of a longer relaxation timescale, so effectively a more gradual reset to the 
+target properties=#
+
+#no mask anywhere
 function noMask(x, z)
-    return 1
+    return 0
 end
+
+#masks out the inside of the center pipe
 function isInsidePipe(x, z)
     if (x > (x_center - pipe_radius) && x < (x_center + pipe_radius) && z < -pipe_top_depth && z > -(pipe_top_depth + pipe_length))
         return true
@@ -253,6 +344,8 @@ function pipeMask(x, z)
         return 0
     end
 end
+
+#masks out the inside of the side pipes 
 function isSidePipe(x, z)
     if (min(x, domain_x - x) < pipe_radius && ((-pipe_top_depth) > z > (-pipe_bottom_depth)))
         return true
@@ -267,6 +360,8 @@ function sidePipeMask(x, z)
         return 0
     end
 end
+
+#option to mask out any interior walls in the middle of the pipe, for example, if you wanted to trigger turbulence 
 function isStopper(x, z) #imaginary stopper at center of pipe 
     depth_down = 0.75 # percentage of pipe
     width = 0.6 # percentage of pipe
@@ -277,14 +372,17 @@ function isStopper(x, z) #imaginary stopper at center of pipe
         return false 
     end
 end
+
+#masks out the pipe walls for center pipe 
 function isPipeWall(x, z)
     left_wall_range = (x_center - pipe_radius - pipe_wall_thickness) .. (x_center - pipe_radius)
     right_wall_range = (x_center + pipe_radius) .. (x_center + pipe_radius + pipe_wall_thickness)
     vert_range = -(pipe_top_depth + pipe_length) .. -(pipe_top_depth)
     if ((in(x, left_wall_range) || in(x, right_wall_range)) && in(z, vert_range))
         return true
-    elseif (isStopper(x, z))
-        return true
+    #uncomment this following section to incorporate any interior walls 
+    # elseif (isStopper(x, z)) 
+    #     return true
     else
         return false
     end
@@ -296,16 +394,8 @@ function pipeWallMask(x,z)
         return 0
     end
 end
-function pipeWallVelocityMask(x, z)
-    if (!isInsidePipe(x, z) && ((-pipe_bottom_depth) < z < (-pipe_top_depth)) && !isSidePipe(x, z))
-        return 1
-    elseif (isInsidePipe(x, z) && isPipeWall(x, z)) #this is for the stopper that is for flow sepparation 
-        return 1
-    else
-        return 0
-    end
-end
 
+#masks out the pipe walls for the side downwelling pipes. 
 function isSidePipeWall(x, z)
     left_wall_range = (pipe_radius) .. (pipe_radius + pipe_wall_thickness)
     right_wall_range = (domain_x - pipe_radius - pipe_wall_thickness) .. (domain_x - pipe_radius)
@@ -323,9 +413,30 @@ function sidePipeWallMask(x,z)
         return 0
     end
 end
+
+#this mask has the goal of combining all areas that should have a velocity masked to zero. In the current 
+#model, this means all areas with a depth between pipe top and pipe bottom that is not inside the center or side pipes. 
+function domainVelocityMask(x, z)
+    if (!isInsidePipe(x, z) && ((-pipe_bottom_depth) < z < (-pipe_top_depth)) && !isSidePipe(x, z))
+        return 1
+    elseif (isInsidePipe(x, z) && isPipeWall(x, z)) #this is for the stopper that is for flow sepparation 
+        return 1
+    else
+        return 0
+    end
+end
+
+
+#=
+These functions describe where in the domain the a field (typically tracer, e.g.) is relaxed to the 
+properties of the unaltered water column. 
+=#
+
+#tracerRelaxationMaskDomainTwo relaxes all areas below the pipe top that are not a pipe wall or interior
+# of a pipe with mask strength 1. Above the pipe, a certain % of the space starting from the pipe
+#(as dictated by unmasked ratio is unmasked, and then the the mask goes in a linear gradient from 0 to 0.5
 function tracerRelaxationMaskDomainTwo(x, y, z)
-    #if not pipe wall, pipe, surface, or two sides
-    unmasked_ratio = 0.4
+    unmasked_ratio = 0.4 # % directly above/below exits of pipe that is not masked 
     if (!isPipeWall(x, y, z) && !isInsidePipe(x, y, z) && (z < (-pipe_top_depth)) && !isSidePipe(x, y, z))
         return 1
     elseif (z > (-pipe_top_depth + unmasked_ratio * pipe_top_depth))
@@ -334,25 +445,8 @@ function tracerRelaxationMaskDomainTwo(x, y, z)
         return 0
     end
 end
-function velocityRelaxationMaskDomainOne(x, y, z)
-    if (!isPipeWall(x, y, z) && !isInsidePipe(x, y, z) && ((-pipe_bottom_depth) < z < (-pipe_top_depth)) && !isSidePipe(x, y, z))
-        return 1
-    else
-        return 0
-    end
-end 
-function tracerRelaxationMaskDomainThree(x, y, z)
-    unmasked_ratio = 0.4
-    if (min(x, domain_x - x) < (domain_z/2) - pipe_radius - pipe_wall_thickness - (pipe_length/10))
-        return 1
-    elseif (z > (-pipe_top_depth + unmasked_ratio * pipe_top_depth))
-        return (0.5/((1 - unmasked_ratio)*pipe_top_depth))*z + 0.5
-    elseif (z < (-pipe_bottom_depth - unmasked_ratio * abs(domain_z - pipe_bottom_depth)))
-        return (0.5/((1 - unmasked_ratio)*(domain_z - pipe_bottom_depth)))*(-z - pipe_bottom_depth - ((1 - unmasked_ratio)*(domain_z - pipe_bottom_depth)))
-    else
-        return 0
-    end
-end
+
+#other method calls
 isInsidePipe(x, y, z) = isInsidePipe(x, z)
 pipeMask(x,y,z) = pipeMask(x, z)
 isSidePipe(x, y, z) = isSidePipe(x, z)
@@ -362,12 +456,23 @@ pipeWallMask(x, y, z) = pipeWallMask(x, z)
 isSidePipeWall(x, y, z) = isSidePipeWall(x, z)
 sidePipeWallMask(x, y, z) = sidePipeWallMask(x, z)
 tracerRelaxationMaskDomainTwo(x, z) = tracerRelaxationMaskDomainTwo(x, 0, z)
-velocityRelaxationMaskDomainOne(x, z) = velocityRelaxationMaskDomainOne(x, 0, z)
-tracerRelaxationMaskDomainThree(x, z) = tracerRelaxationMaskDomainThree(x, 0, z)
-pipeWallVelocityMask(x, y, z) = pipeWallVelocitymask(x, z)
+domainVelocityMask(x, y, z) = domainVelocityMask(x, z)
+
+
 
 """INITIAL CONDITIONS"""
-#this function for some reason does not work, calculates a gradient that is too large 
+#=these functions take in spatial coordinates (x, z) or (x, y, z) & return the initial conditions of either velocity
+or tracer fields at that point.=#
+
+
+#The goal of neutralDensityPipeTempGradient is to calculate a temperature gradient for the inside of the pipe such that 
+#the water in the pipe starts off neutrally buoyant with the surroundings (the density average witin the pipe is the same
+#as the density average outside the pipe) However, it does not seem to work. Perhaps since the estimation is based on a linear
+#eos? 
+#The function takes in the pipe length, the pipe top depth (positive depth), the grid sizing, a function for background water column
+#salinity (Sfunc(x,z)) and one for background water column temperature (Tfunc(x, z)) and returns a number for the dT/dz that should
+#be in the pipe as the initial condition. 
+
 function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Function, Tfunc::Function)
     eos = TEOS10EquationOfState()
     p_bot = p_top + p_length
@@ -388,14 +493,17 @@ function neutralDensityPipeTempGradient(p_length, p_top, grid_size, Sfunc::Funct
          ρ_wc_avg = density_tot/count
     α_avg = α_tot/count   
     #calculate and return the pipe gradient for roughly neutral buoayncy, in the form dt/dz
-    return ((ρ₀ - ρ_wc_avg))/(α_avg * 1000 * p_length)
+    return (2 * (ρ₀ - ρ_wc_avg))/(α_avg * 1000 * p_length) #removing the factor of 2 seems to provide a good estimate at least
 end 
 
 # const pipeTGrad = neutralDensityPipeTempGradient(pipe_length, pipe_top_depth, max_grid_spacing, SWaterColumn, TWaterColumn)
-const pipeTGrad = 0.0206#similitude 0.0418 for 1m long 
+#unfortunately, due to the failure of my function above, this is currently still set manually :(, equations for testing it are below. 
+const pipeTGrad = 0.025#similitude 0.0418 for 1m long
 
- #const pipeTGrad = 0.02
-
+#T_init sets the initial conditions for temperature. Outside of the pipe, this is equal to the water column background. Inside the pipe AND pipe walls
+#it follows a gradient (less than the background gradient) such that the pipe (with the low salinity water) is of equivalent densty to the surroundings once 
+#integrated through its length
+#potentially should change it to just the pipe and not the pipe walls 
 function T_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return TWaterColumn(-pipe_bottom_depth) + (pipeTGrad * (z + pipe_bottom_depth))
@@ -406,12 +514,9 @@ function T_init(x, y, z)
     end
 end
 
-
-#fully equillibriated 
-# function T_init(x, y, z)
-#     return TWaterColumn(z)
-# end
-
+#S_init sets the initial conditions for temperature. Outside the pipe and pipe walls, this is equal to the water column background. 
+#Inside the pipe AND pipe walls it is equal to the condition at the entrance (low salinity bottom water for the main pipe, high saliity 
+#surface water for the side pipes)
 function S_init(x, y, z)
     if (isInsidePipe(x, z) || isPipeWall(x, z))
         return SWaterColumn(-pipe_bottom_depth)
@@ -421,6 +526,9 @@ function S_init(x, y, z)
         return SWaterColumn(z)
     end
 end
+
+#A_init sets the initial conditions for arbitrary/visualization tracer A. This sets a value of 1 for the bottom water (all water below pipe 
+#bottom, i.e. the water that enters the pipe), and a value of 0 for all else. 
 function A_init(x, y, z)
     if(z < -pipe_bottom_depth)
         return 1
@@ -428,15 +536,31 @@ function A_init(x, y, z)
         return 0
     end
 end 
+
+#w_init sets initial vertical velocity, potentially useful if you wantt to set an initial pumping velocity
 function w_init(x, z)
     return 0;
 end
+
+#other method calls
 T_init(x, z) = T_init(x, 0, z)
 S_init(x, z) = S_init(x, 0, z)
 A_init(x, z) = A_init(x, 0, z)
 
-#diagnostic function to check buoyancy differences
-function getBackgroundDensityPipe(z, Tfunc::Function, Sfunc::Function)#takes a positive depth
+
+#=THE FOLLOWING SECTION IS A DIAGNOSTIC TO CHECK YOUR INITIAL CONDITIONS
+Use it to verify the following
+    1. the pipe density is similar to the water column density, if it is not exact, try to make the pipe slightly less dense
+    this means that wc density - pipe density should be slightly positive, and on the order of 10^-5
+    2. wc density - pipe eq density gives you the density of the water column - the density of the fully thermally equillibriated 
+    pipe (that is, every point in the pipe has the same temperature as the water at depth z outside the pipe). This is used for 
+    similitude testing, so you can use this to check to see if the values are what you expect after salinity gradient scaling, or just
+    as another parameter. 
+=#
+
+#getDensityPipe returns the density per z coordinate for a x that is located inside the center main pipe (in this case, the very center). 
+#this function is used as a diagnostic and takes in a depth z, Tfunc(x, z) and Sfunc(x, z) that return a temperature and salinity respectively
+function getDensityPipe(z, Tfunc::Function, Sfunc::Function)
     eos = TEOS10EquationOfState() 
     S_abs = gsw_sa_from_sp(Sfunc(x_center,z), gsw_p_from_z(z, 30), 31, -30) #random lat and long in ocean
     T_consv = gsw_ct_from_t(S_abs, Tfunc(x_center,z), gsw_p_from_z(z, 30)) #set to 30 degrees north
@@ -448,111 +572,163 @@ pipe_density_tot = 0
 equalized_pipe_density_tot = 0
 count = 0
 while (z <= -pipe_top_depth)
-    wc_density_tot += getBackgroundDensity(z, T_init, S_init)
-    pipe_density_tot += getBackgroundDensityPipe(z, T_init, S_init)
-    equalized_pipe_density_tot += getBackgroundDensityPipe(z, TWaterColumn, S_init) #as if fully equalized, for similitude 
+    wc_density_tot += getBackgroundDensity(z, T_init, S_init) #integrating over non altered water column
+    pipe_density_tot += getDensityPipe(z, T_init, S_init) #integrating over pipe initial condition
+    equalized_pipe_density_tot += getDensityPipe(z, TWaterColumn, S_init) #integrating over pipe as if fully equalized in temperature
     z += z_grid_spacing
     count += 1
 end
 
-@info @sprintf("wc density - pipe_density = %.2e kg/m^3", (wc_density_tot/count) - (pipe_density_tot/count))
-@info @sprintf("@ eq, wc density - pipe_eq_density = %.3ek kg/m^3", (wc_density_tot/count) - (equalized_pipe_density_tot/count))
+@info @sprintf("wc density - pipe_density = %.2e kg/m^3", (wc_density_tot/count) - (pipe_density_tot/count)) # num 1 in the info section above
+@info @sprintf("@ eq, wc density - pipe_eq_density = %.3ek kg/m^3", (wc_density_tot/count) - (equalized_pipe_density_tot/count)) #num 2 in the info section above 
+
+
 
 """MODEL BOUNDARY CONDITIONS SETUP"""
-# get gradients for boundary conditons
+#this section calculates the gradients for setting the boundary conditions. As long as you have the base water column functions
+#that take in depth input (z), & the z grid spacing, they can be called. 
+#TODO: this still need some rigourous testing as I just fixed some syntax confusion
 initial_T_top_gradient = (TWaterColumn(0) - TWaterColumn(0 - z_grid_spacing))/z_grid_spacing
-initial_T_bottom_gradient = (TWaterColumn(domain_z + z_grid_spacing) - TWaterColumn(0domain_z))/z_grid_spacing
-initial_S_top_gradient = (SWaterColumn(0, 0 - z_grid_spacing) - SWaterColumn(0,0))/z_grid_spacing
-initial_S_bottom_gradient = (SWaterColumn(0, domain_z) - SWaterColumn(0, domain_z + z_grid_spacing))/z_grid_spacing
+initial_T_bottom_gradient = (TWaterColumn(-domain_z + z_grid_spacing) - TWaterColumn(-domain_z))/z_grid_spacing
+initial_S_top_gradient = (SWaterColumn(0) - SWaterColumn(0 - z_grid_spacing))/z_grid_spacing
+initial_S_bottom_gradient = (SWaterColumn(-domain_z + z_grid_spacing) - SWaterColumn(-domain_z))/z_grid_spacing
+
+
 
 """FORCING FUNCTIONS"""
-# #none currently used 
+# This is where you would put forcing functions that you write yourself
+# There are a number of example of various forcing functions (discrete and nondiscrete) in the file that was used for 
+# prototyping and running on the cpu
+
+#these are diferent method calls, since targets called by relaxation functions pass a (x, z, t) and the water column 
+#function takes just a z 
 TWaterColumnTarget(x, z, t) = TWaterColumn(z)
 SWaterColumnTarget(x, z, t) = SWaterColumn(z)
+
+
 
 """MODEL DIFFUSIVITY SETUP"""
 const diffusivity_data = (seawater = sw_diffusivity_data, pipe = pipe_data)
 const pipeWallThickness = (actual = pipe_wall_thickness, intended = pipe_wall_thickness_intended)
+
+#= 
+The following equations are implemented in the Scalar Diffusivity closure to set different diffusivities and viscosities 
+at different spatial locations in the model to allow for changes within the pipe walls. 
+
+In general, they take in the spatial x, y, z coordinates, a named tuple diffusivities which stores the seawater and pipe 
+wall material physical data (see above). A number for diffusivity is then returned
+=#
+
+#tempDiffusivities returns the thermal diffuivity of the model at each location. Currently, it returned the molecular diffusivity
+#at all locations, mimicking an infinite reservoir with water walls, however, it has the capability to return an elevated or reduced
+#diffusivity at the pipe walls. 
+#tempDiffusivities also takes in wallThickness --> a tuple of information about pipe wall thickness in model vs intended, and 
+#a wall indicator which if "WALL" is passed in, the diffusivity for the wall is returned. The wall indicator is used to retrieve
+#the wall thermal difffusivity (generally higher) for finding the diffusive CFL later. 
 function tempDiffusivities(x, y, z, diffusivities::NamedTuple, wallThickness::NamedTuple, wall_indicator::String)
-    return diffusivities[:seawater].T
-    # # if (isPipeWall(x, z) || wall_indicator == "WALL")
-    # #     return diffusivities[:pipe].thermal_diffusivity * (wallThickness[:actual]/wallThickness[:intended]) #edit to account for wall thickness
-    # # else 
-    #     #try scaling 
-    #     max_velocity_predicted = 0.03
-    #     return max_velocity_predicted*max_grid_spacing*1.1
-    #     #return diffusivities[:seawater].T
-    # # end
+    return diffusivities[:seawater].T #for infinite reservoir, water walls
+
+    #this following section sets the pipe wall diffusivity to that of the material scaled by the thickness/intended thickness (e.g. if it were
+    #twice as thick, it would be 2x the pipe wall material diffusivity)
+    # if (isPipeWall(x, z) || wall_indicator == "WALL")
+    #     return diffusivities[:pipe].thermal_diffusivity * (wallThickness[:actual]/wallThickness[:intended]) #edit to account for wall thickness
+    # else
+        #this returns molecular diffusivity
+        #return diffusivities[:seawater].T
+    # end
 end
-#crashed with zeroing out salt diffusivity and viscosity
+
+#saltDiffusivities returns the diffusivity of salt of the model at each location. Currently, this is set to 0 for all pipe walls (side and main)
+#and the molecular value in the remainder of the model. 
 function saltDiffusivities(x, y, z, diffusivities::NamedTuple)
-    if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
-        return diffusivities[:seawater].S
-    elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
+    if (isPipeWall(x, z) || isSidePipeWall(x, z))
         return 0
     else
         return diffusivities[:seawater].S
     end
 end
+
+#myViscosity returns the viscosity of the model at each location. Currently, this is set to 0 for all pipe walls (side and main)
+#and the molecular value in the remainder of the model. 
 function myViscosity(x, y, z, diffusivities::NamedTuple)
-    if(velocityRelaxationMaskDomainOne(x, y, z) == 1)
-        return diffusivities[:seawater].ν
-    elseif (isPipeWall(x, z) || isSidePipeWall(x, z))
+    if (isPipeWall(x, z) || isSidePipeWall(x, z))
         return 0
     else 
         return diffusivities[:seawater].ν
     end
+
 end
+
+#other method calls - these are important, because the ScalarDiffusivity constructor automatically only passes in (x, z, t) where t is time. 
 tempDiffusivities(x, z, t) = tempDiffusivities(x, 0, z, diffusivity_data, pipeWallThickness, "")
 saltDiffusivities(x ,z ,t ) = saltDiffusivities(x, 0, z, diffusivity_data)
 myViscosity(x ,z ,t ) = myViscosity(x, 0, z, diffusivity_data)
 
 """MODEL SETUP"""
+#creates the domain grid. Periodic in x, bounded in z
 domain_grid = RectilinearGrid(GPU(), Float64; size=(x_res, z_res), x=(0, domain_x), z=(-domain_z, 0), topology=(Periodic, Flat, Bounded))
 
+#creates clock, starting at time = 0
 clock = Clock{eltype(domain_grid)}(time=0)
 
+#timestepper
 timestepper = :QuasiAdamsBashforth2
 
+#advection scheme. Default WENO order is 5, can specific higher odd orders. WENO 5 results in slight numerical diffusion 
 advection = WENO()
 
+#equation of state. uses TEOS 10
 eos = TEOS10EquationOfState()
 myBuoyancy = SeawaterBuoyancy(equation_of_state=eos)
 
-
+#tracers & closure
+#MAKE SURE THAT KAPPA IS DEFINED IN THE SAME ORDER AS TRACER DECLARATION
+#T is temperature, S is salinity, A is a random tracer for visualization
 tracers = (:T, :S, :A)
 closure = ScalarDiffusivity(ν=myViscosity, κ=(T=tempDiffusivities, S=saltDiffusivities, A = 0))
-#closure = ScalarDiffusivity(ν = 1, κ=1)
 
-#domain is periodic in the east-west
+#boundary conditions
+#sets Neumann (constant gradient) boundary conditions at top/bottom of domain based on initial settings 
 T_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_T_top_gradient), bottom = GradientBoundaryCondition(initial_T_bottom_gradient))
 S_bcs = FieldBoundaryConditions(top = GradientBoundaryCondition(initial_S_top_gradient), bottom = GradientBoundaryCondition(initial_S_bottom_gradient))
 boundary_conditions = (T = T_bcs, S = S_bcs)
 
-#TODO: combine these when set 
-#uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = velocityRelaxationMaskDomainOne)
-uw_pipe_wall_forcer = Relaxation(rate = max_relaxation_rate, mask = pipeWallVelocityMask)
+#various forcing functions for right hand side of tracer & momentum equations 
+#forces the area covered by domainVelocityMask to have a u and w velocity of 0
+uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = domainVelocityMask)
+#forces the area covered by tracerRelaxationMaskDomainTwo back to background water column temperature properties 
 T_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = TWaterColumnTarget)
+#forces the area covered by tracerRelaxationMaskDomainTwo back to background water column salinity properties 
 S_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = SWaterColumnTarget)
-#S_side_forcer = Relaxation(rate = max_relaxation_rate, mask = sidePipeMask, target = SWaterColumn(-pipe_top_depth))
-forcing = (u = (uw_pipe_wall_forcer),  w = (uw_pipe_wall_forcer), T = (T_domain_forcer), S = (S_domain_forcer))
+forcing = (u = (uw_domain_forcer),  w = (uw_domain_forcer), T = (T_domain_forcer), S = (S_domain_forcer))
 
+#instantiates the model
 model = NonhydrostaticModel(; grid=domain_grid, clock, advection, buoyancy = myBuoyancy, tracers, timestepper, closure, forcing, boundary_conditions)
+
+#operations to define after model is made. 
+density_operation = seawater_density(model; geopotential_height)
+@info "model made"
+
+#various checkpoint stuff - implemented but not properly tested!! 
+#checkpoint writer 
 # model.output_writers[:checkpointer] = Checkpointer(model; frequency = 150000, dir = pathname, prefix = "checkpoint", force = false, verbose = false, properties = [:architecture, :boundary_conditions, :grid, :clock, :buoyancy, :closure, :velocities, :tracers, :timestepper])
 
+#to continue at checkpoint 
 # restore_iteration  = 150000
 # checkpoint_filename = joinpath(pathname, "checkpoint"*string(restore_iteration)) #TODO: check this 
 # model_kwargs = Dict("closure" => closure, "forcing" => forcing)
 # model = restore_from_checkpoint(checkpoint_filename; model_kwargs...)
 
-density_operation = seawater_density(model; geopotential_height)
-@info "model made"
 
 
 """SET UP INITIAL CONDITIONS"""
-set!(model, T= T_init, S=S_init, w = w_init, A = A_init)#ASK  - why set twice ??
+#there was a weird initial bug that required setting the initial conditions twice. this bug is somewhat documented in the github
+#effectively, if you define a initial function just before this, you only need to set once. Have not tested in a while - bug may be gone? For now
+#seting twice works. 
+set!(model, T= T_init, S=S_init, w = w_init, A = A_init)
 set!(model, T= T_init, S=S_init, w = w_init, A = A_init)
 @info "initial conditions set"
+
 
 
 """SETTING UP SIMULATION"""
@@ -564,7 +740,7 @@ diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusiv
 # diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0, diffusivity_data)
 #initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed)
-initial_time_step = 0.0048 #0.0048 for 1m 0.02R
+initial_time_step = 0.000005 #SIMILITUDE 0.0048 for 1m 0.02R
 """IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
 new_max_time_step = min(0.2 * diffusion_time_scale, 0.2 * viscous_time_scale, max_time_step_allowed) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
 #set up simulation & timewizard
