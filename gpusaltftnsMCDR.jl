@@ -317,6 +317,18 @@ min_relaxation_timescale = 1.1 * max_time_step_allowed
 max_relaxation_rate = 1/min_relaxation_timescale
 
 
+"""MORE COMPUTATIONAL FUNCTIONS THAT ARE DOMAIN DEPENDENT"""
+#getXIndex returns the discrete index for x in fieldNodes that is closest to spatial xCoord given
+function getXIndex(fieldNodes, xCoord)
+    for i in 1 : length(fieldNodes[1])
+        if(abs(fieldNodes[1][i] - xCoord) <= 1.01(x_grid_spacing/2)) #1.10 adjusts for some rounding issue with centers 
+            return i
+        end
+    end
+    throw("index not found for given z value")
+end
+
+
 
 """MASKING FUNCTIONS"""
 #=these functions take in spatial coordinates (x, z) or (x, y, z) & return a number between 0 and 1 that describes
@@ -732,61 +744,82 @@ set!(model, T= T_init, S=S_init, w = w_init, A = A_init)
 
 
 """SETTING UP SIMULATION"""
-#finding various time scales 
+#This section calculates various time scales for setting CFL
 min_grid_spacing = min(minimum_xspacing(model.grid), minimum_zspacing(model.grid))
-initial_travel_velocity_fake = 0.025 # a number just to set an initial time step, i set it to be around max for safety
-initial_advection_time_scale = min_grid_spacing/initial_travel_velocity_fake
-diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, pipeWallThickness, "WALL") #TRACER_MIN, set to tracer with biggest kappa, to use when using function based diffusivity
-# diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T
+
+#timescales for CFL
 viscous_time_scale = (min_grid_spacing^2)/model.closure.ν(0, 0, 0, diffusivity_data)
-#initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed)
+#for diffusion time scale, use tracer with largest kappa. 
+diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T(0, 0, 0, diffusivity_data, pipeWallThickness, "WALL") #use for when scalar diffusivity is a function
+# diffusion_time_scale = (min_grid_spacing^2)/model.closure.κ.T #use when scalar diffusivity is not a function
+
+#manually set max time step, since diffusion cfl does not work with scalar diffusivity that calls a function to get diffusivity
+new_max_time_step = min(0.2 * diffusion_time_scale, 0.2 * viscous_time_scale, max_time_step_allowed) #uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
+
+#timescales for setting initial time step
+#the following set it automatically-ish, with just a predicted v_max
+# initial_advection_time_scale = min_grid_spacing/v_max_predicted
+# initial_time_step = 0.5*min(0.2 * min(diffusion_time_scale, oscillation_period, viscous_time_scale, initial_advection_time_scale), max_time_step_allowed) #sets it to be 1/2 of satisfying all CFLs & max time step allowed
+#the following instead allows you to set it manually, which is used now. It shoudl be set to be pretty small to allow the viscous boundary layers to resolve initially. 
 initial_time_step = 0.000005 #SIMILITUDE 0.0048 for 1m 0.02R
-"""IMPORTANT, diffusion cfl does not work with functional kappas, need to manually set max step"""
-new_max_time_step = min(0.2 * diffusion_time_scale, 0.2 * viscous_time_scale, max_time_step_allowed) #TRACER_MIN, uses a cfl of 0.2, put in diffusion time scale of tracer with biggest kappa, or viscosity
-#set up simulation & timewizard
-simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration) # make initial delta t bigger
+
+#initiate simulation
+simulation = Simulation(model, Δt=initial_time_step, stop_time=simulation_duration, wall_time_limit=run_duration)
 
 
 
-#various callbacks
-#timewizard
-timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.01, min_change = 0.5) 
+"""SIMULATION CALLBACKS"""
+#timewizard for time stepping
+timeWizard = TimeStepWizard(cfl=CFL, diffusive_cfl = CFL, max_Δt = new_max_time_step, max_change = 1.01, min_change = 0.5) #max change of 1.01 keeps it more stable
 simulation.callbacks[:timeWizard] = Callback(timeWizard, IterationInterval(4))
+
+
 #progress Message
 progress_message(sim) = @printf("Iteration: %04d, time: %s, Δt: %s, wall time: %s\n", iteration(sim), prettytime(sim), prettytime(sim.Δt), prettytime(sim.run_wall_time))
 add_callback!(simulation, progress_message, IterationInterval(50))
 
-#set up output_writers for large fields
+
+#output writers
+
+#create model fields 
 w = model.velocities.w;
 u = model.velocities.u;
 T = model.tracers.T;
 S = model.tracers.S;
 ζ = Field(-∂x(w) + ∂z(u)) #vorticity in y 
-ρ = Field(density_operation)
+ρ = Field(density_operation) #density
 A = model.tracers.A
-function getXIndex(fieldNodes, xCoord)
-    for i in 1 : length(fieldNodes[1])
-        if(abs(fieldNodes[1][i] - xCoord) <= 1.01(x_grid_spacing/2)) #1.10 adjusts for some rounding issue with centers 
-            return i
-        end
-    end
-    throw("index not found for given z value")
-end
+
+#the following section acts as diagnostics
+#it creates fields to store the buoyant and viscous components of the momentum equations for each point in the model.
+#note that these are computed manually, not what the model actually calculates, so it may misrepresent the numerics of the model. 
+#however, they shoudl serve as a good estimate
+
+#VISCOUS COMPONENT: 
+#ViscousComponent returns the portion of a 1D momentum equation that is frictional (viscous) at each discrete point i, j, k. The function takes 
+#discrete locations i, j, k, the grid the field is on, the closure of the model, the model clock, and a velocity field (in whichever direction)
+#you want the viscosity in. 
 @inline function ViscousComponent(i, j, k, grid, closure, clock, velocities)
     #return _νᶜᶜᶜ(i, j, k, grid, model.closure, model.diffusivity_fields, model.clock)  * ∇²ᶜᶜᶜ(i, j, k, grid, model.velocities.w)
     return _νᶜᶜᶜ(i, j, k, grid, closure, nothing, clock)  * ∇²ᶜᶜᶜ(i, j, k, grid, velocities)
 end
 w_viscousArgs = (model.closure, model.clock, model.velocities.w)
 w_viscous_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(ViscousComponent, model.grid, w_viscousArgs...)
-ν= Field(w_viscous_component_kernel_op)
+ν= Field(w_viscous_component_kernel_op) 
 #viscous_field = compute!(ν_component)
-#this computes the buoyancy relative to the point stationary outside --> not right, but how?
+
+#BUOYANCY COMPONENT
+#wcBuoyancy returns the portion of the momentum equation (only in w, since the g vector is in just the z) at each discrete point i, j, k. The
+#function takes in discrete location i, j, k, the grid the field is on, a SeawaterBuoyancy struct (), and all the tracer fields of the model. Note that this is 
+#relative to reference density so it may not be nonzero even if you expect it to be. 
 @inline function wcBuoyancy(i, j, k, grid, b::SeawaterBuoyancy, tracer_fields)
     T, S = get_temperature_and_salinity(b, tracer_fields)
     return (- (b.gravitational_acceleration * ρ′(i, j, k, grid, b.equation_of_state, T, S)
     / b.equation_of_state.reference_density))
 end
-#this computes the buoyancy acceleration relative to a reference value
+
+#this computes the buoyancy component in my model relative to the "background density field" - in this case, it subtracts off the density of the water column field
+#in an area away from the pipes. As compared to wcIndex, it takes in a 7th argument wc_index, that is the discrete x index of the location to get the "background" from
 @inline function BuoyancyComponent(i, j, k, grid, b::SeawaterBuoyancy, tracer_fields, wc_index)
     T, S = get_temperature_and_salinity(b, tracer_fields)
     return (- (b.gravitational_acceleration * ρ′(i, j, k, grid, b.equation_of_state, T, S)
@@ -794,29 +827,35 @@ end
 end
 tracer_nodes = nodes(model.grid, (Center(), Center(), Center()), reshape = true)
 wc_index = getXIndex(tracer_nodes, pipe_radius + (3 *x_grid_spacing))
-buoyancyArgs = (myBuoyancy, model.tracers, wc_index) #for some reason model.buoyancy.equation_of_state does not return an eos
-#buoyancy_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(buoyancy_perturbationᶜᶜᶜ, model.grid, buoyancyArgs...) #uses built in
+
+#this is the nonlinear option that subtracts off the background
+buoyancyArgs = (myBuoyancy, model.tracers, wc_index) #for some reason model.buoyancy.equation_of_state does not return an eos, so I use myBuoyancy
+
+#this is the built in buoyancy perturbation option that only takes a linear eos (otherwise identicle to wcBuoyancy)
+# buoyancyArgs_linear = (SeawaterBuoyancy(), model.tracers)
+# #buoyancy_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(buoyancy_perturbationᶜᶜᶜ, model.grid, buoyancyArgs_linear...) #uses built in function which is linear
+
 buoyancy_component_kernel_op = KernelFunctionOperation{Center, Center, Center}(BuoyancyComponent, model.grid, buoyancyArgs...)
 b = Field(buoyancy_component_kernel_op)
 #buoyancy_field = compute!(b_component)
 
-
-
-
-
-
+#declare output writers
+#option with diagnostics
 simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A, ν, b); filename, schedule=TimeInterval(output_interval), overwrite_existing=true) #can also set to TimeInterval
+#option without diagnostics 
 #simulation.output_writers[:outputs] = JLD2OutputWriter(model, (; u, w, T, S, ζ, ρ, A); filename, schedule=TimeInterval(output_interval), overwrite_existing=true) #can also set to TimeInterval
 
-
+#run simulation
 run!(simulation, pickup = false)
-# simulation.wall_time_limit +=10hour
+
+#ability to keep running, note that it starts from wall time 0 again, but simulation time is whatever it left off as 
+# simulation.wall_time_limit = 10hour
 # run!(simulation)
 
 
 
-#visualize simulation
-#visualize simulation
+
+"""DATA RETREIVAL FROM FILE"""
 output_filename = filename * ".jld2"
 u_t = FieldTimeSeries(output_filename, "u")
 w_t = FieldTimeSeries(output_filename, "w")
@@ -862,6 +901,8 @@ A_range = getMaxAndMinEnd(A_t)
 @info "finished getting max and min of each"
 
 
+
+""""PLOTTING DATA"""
 #plotting the average along the pipe vs time 
 function plotAverages(timeSeriesField, myTimes, locs)
     averages = zeros(length(myTimes))
