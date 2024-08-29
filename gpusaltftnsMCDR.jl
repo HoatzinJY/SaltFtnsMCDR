@@ -707,7 +707,7 @@ boundary_conditions = (T = T_bcs, S = S_bcs)
 
 #various forcing functions for right hand side of tracer & momentum equations 
 #forces the area covered by domainVelocityMask to have a u and w velocity of 0
-uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = domainVelocityMask)
+uw_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = domainVelocityMask) #IDEA: relax non pipe wall areas at a slightly slower rate --> less flicker? 
 #forces the area covered by tracerRelaxationMaskDomainTwo back to background water column temperature properties 
 T_domain_forcer = Relaxation(rate = max_relaxation_rate, mask = tracerRelaxationMaskDomainTwo, target = TWaterColumnTarget)
 #forces the area covered by tracerRelaxationMaskDomainTwo back to background water column salinity properties 
@@ -1286,14 +1286,15 @@ end
 
 #uutility functions again 
 #this function gives you an x index closest to x spacing coordinate - TODO: can make a lot faster via a search that halves things 
-
 #this function gets you the max and min in pipe for an array 
 function getMaxAndMinInPipeArr(arr, x_range::UnitRange, z_range::UnitRange)
     myMax = maximum(arr[x_range, z_range])
     myMin = minimum(arr[x_range, z_range])
     return (myMin, myMax)
 end
-#extract readable fields 
+
+
+"""PLOT DIAGNOSTIC FIELDS FOR BUOYANCY AND VISOCUS FORCES """
 # ν = adapt(Array, interior(viscous_field, :, 1, :))
 # b = adapt(Array, interior(buoyancy_field, :, 1, :))
 #get max and min of the two to plot on the same scale
@@ -1389,7 +1390,7 @@ record(fig, joinpath(pathname,"componentsPlotThreeQuarter.mp4"), frames, framera
 end
 
 
-
+"""PLOT FILTERED AVERAGES"""
 #FILTERED AVERAGES
 averages_unfilt = zeros(length(times))
 for j in 1 : length(times)
@@ -1421,8 +1422,6 @@ save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
 @info "Finished plotting average values vs time chart"
 
 
-#plot lines showing velocity at different heights
-#plot bar showing average flux through pipe
 
 
 
@@ -1435,6 +1434,8 @@ save(joinpath(pathname,"Filtered Velocity and Discharge.png"), fig)
 
 
 
+"""PLOT AT JUST ONE MOMENT IN TIME"""
+#currently plots the curl of the momentum equations 
 
 #the stuff below just plots one moment in time 
 #GOAL: plot vorticity 
